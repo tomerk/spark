@@ -17,6 +17,8 @@
 
 package org.apache.spark.bandit
 
+import breeze.linalg.{DenseMatrix, DenseVector, inv}
+import breeze.stats.distributions.{MultivariateGaussian, Rand}
 import org.apache.spark._
 
 class BanditSuite extends SparkFunSuite with LocalSparkContext {
@@ -54,4 +56,30 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
     val results = sc.parallelize(1 to numSlaves).map(x => (x, broadcast.value.sum))
     assert(results.collect().toSet === (1 to numSlaves).map(x => (x, 10)).toSet)
   }
+
+  test("Test Bandit Timings") {
+    val numFeatures = 3
+    val arms = 10
+    val policy = new LinUCBPolicy(numArms = arms, numFeatures = numFeatures)
+
+    val bestArm = 3
+
+    val rewardDist = Rand.gaussian
+
+    var i = 0
+    val start = System.currentTimeMillis()
+    while (i < 10000) {
+      val featureVec = DenseVector.rand[Double](numFeatures)
+      val arm = policy.chooseArm(featureVec)
+
+      logInfo(s"$i: $arm")
+      val reward = rewardDist.draw() - (if (arm == bestArm) 10 else 13)
+      policy.provideFeedback(arm, featureVec, reward)
+      // mat * mat
+      i += 1
+    }
+    val end = System.currentTimeMillis()
+    logInfo(s"${(end - start)/10000.0} millis per round")
+  }
+
 }
