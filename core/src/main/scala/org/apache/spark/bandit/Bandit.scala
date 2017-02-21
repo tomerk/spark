@@ -17,8 +17,9 @@
 
 package org.apache.spark.bandit
 
-import breeze.linalg.{DenseMatrix, DenseVector}
+import breeze.linalg.{DenseMatrix, DenseVector, inv}
 import breeze.numerics.sqrt
+import breeze.stats.distributions.MultivariateGaussian
 
 import scala.reflect.ClassTag
 
@@ -41,14 +42,129 @@ abstract class Bandit[A: ClassTag, B: ClassTag] {
   def loadTunedSettings(file: String): Unit
 }
 
+// FIXME!
+// TODO! FIXME! Write these w/ a method to just compute rewards, that way
+// random-tiebreakers & multi-objective comparators can easily be used,
+// and the code for synchronization & reward computation can be much simplified
+
+// Arm choosing logic: arg-max on rewards, filter seq to only
+// include max-valued arms, select random index in filtered list
+
+// Also need state access & merging code that is complete, not just per-arm??!!
+// (ALTHOUGH if we can send state updates for each arm separately it could lower
+// the total required communication, but that's a premature optimization)
+
+
+// The state & state updates are basically the same for thompson's sampling and LinUCB
+// (will need to note that the thompson sampling code was modified to be on disjoint models)
+// The only difference is the reward computation (and it may be worth pre-computing the inverse?)
+
+// Future work: lower-overhead, sgd based updates!
+
+abstract class ContextualBanditPolicy(numArms: Int, numFeatures: Int) extends Serializable {
+  @transient lazy private val stateLock = this
+  val featuresAccumulator: Array[DenseMatrix[Double]] = {
+    Array.fill(numArms)(DenseMatrix.eye(numFeatures))
+  }
+  val rewardAccumulator: Array[DenseVector[Double]] = {
+    Array.fill(numArms)(DenseVector.zeros(numFeatures))
+  }
+
+  def chooseArm(features: DenseVector[Double]): Int = {
+    val rewards = estimateRewards(features)
+    val maxReward = rewards.max
+    val bestArms = rewards.zipWithIndex.filter(_._1 == maxReward)
+    bestArms(scala.util.Random.nextInt(bestArms.length))._2
+  }
+
+  private def estimateRewards(features: DenseVector[Double]): Seq[Double] = {
+    (0 until numArms).map { arm =>
+      val (armFeaturesAcc, armRewardsAcc) = stateLock.synchronized {
+        (featuresAccumulator(arm), rewardAccumulator(arm))
+      }
+      estimateRewards(features, armFeaturesAcc, armRewardsAcc)
+    }
+  }
+
+  protected def estimateRewards(features: DenseVector[Double],
+                                armFeaturesAcc: DenseMatrix[Double],
+                                armRewardsAcc: DenseVector[Double]): Double
+
+  def provideFeedback(arm: Int, features: DenseVector[Double], reward: Double): Unit = {
+    val xxT = features * features.t
+    val rx = reward * features
+
+    stateLock.synchronized {
+      // Not an in-place update for the matrices, leaves them valid when used elsewhere!
+      featuresAccumulator(arm) = featuresAccumulator(arm) + xxT
+      rewardAccumulator(arm) = rewardAccumulator(arm) + rx
+    }
+  }
+
+  /**
+   * Warning: Does not lock the state of the other policy!
+   * @param otherPolicy
+   */
+  def subtractState(otherPolicy: ContextualBanditPolicy): Unit = {
+    for (arm <- 0 until numArms) stateLock.synchronized {
+      // Not an in-place update for the matrices, leaves them valid when used elsewhere!
+      featuresAccumulator(arm) = featuresAccumulator(arm) - otherPolicy.featuresAccumulator(arm)
+      rewardAccumulator(arm) = rewardAccumulator(arm) - otherPolicy.rewardAccumulator(arm)
+    }
+  }
+
+  /**
+   * Warning: Does not lock the state of the other policy!
+   * @param otherPolicy
+   */
+  def addState(otherPolicy: ContextualBanditPolicy): Unit = {
+    for (arm <- 0 until numArms) stateLock.synchronized {
+      // Not an in-place update for the matrices, leaves them valid when used elsewhere!
+      featuresAccumulator(arm) = featuresAccumulator(arm) + otherPolicy.featuresAccumulator(arm)
+      rewardAccumulator(arm) = rewardAccumulator(arm) + otherPolicy.rewardAccumulator(arm)
+    }
+  }
+}
+
+
+/**
+ * Linear Thompson Sampling,
+ * Thompson Sampling for Contextual Bandits with Linear Payoffs
+ * Agrawal et al. JMLR
+ *
+ * http://jmlr.csail.mit.edu/proceedings/papers/v28/agrawal13.pdf
+ *
+ * @param numArms
+ * @param numFeatures
+ * @param v Assuming rewards are R-sub-gaussian,
+ *          set v = R*sqrt((24/epsilon)*numFeatures*ln(1/delta))
+ *
+ *          Practically speaking I'm not really sure what values to set,
+ *          so I'll default to 5? Larger v means larger variance & more
+ *          weight on sampling arms w/o the highest expectation
+ */
+class LinThompsonSamplingPolicy(numArms: Int, numFeatures: Int, v: Double = 5.0)
+  extends ContextualBanditPolicy(numArms, numFeatures) {
+  override protected def estimateRewards(features: DenseVector[Double],
+                                         armFeaturesAcc: DenseMatrix[Double],
+                                         armRewardsAcc: DenseVector[Double]): Double = {
+    // TODO: Should be able to optimize code by only computing coefficientMean after
+    // updates. Would require an update to ContextualBanditPolicy to apply optimization
+    // to all contextual bandits.
+    val coefficientMean = armFeaturesAcc \ armRewardsAcc
+    val coefficientDist = MultivariateGaussian(coefficientMean, v*v*inv(armFeaturesAcc))
+    val coefficientSample = coefficientDist.draw()
+
+    coefficientSample.t*features
+  }
+}
+
 /**
  * LinUCB, from:
  * A Contextual-Bandit Approach to Personalized News Article Recommendation
  * (Li et al, 2010)
  * http://research.cs.rutgers.edu/~lihong/pub/Li10Contextual.pdf
  *
- * FIXME: The first round should choose totally randomly! Or else will wayy overweight
- * the first thing.
  *
  * TODO: Optimize code for the case where numFeatures is small (<= 5 to 10 or so)
  *
@@ -59,43 +175,95 @@ abstract class Bandit[A: ClassTag, B: ClassTag] {
  *              where 1-delta roughly corresponds to the probability that the
  *              estimated value has the true value within it's confidence bound
  */
-class LinUCBState(numArms: Int, numFeatures: Int, alpha: Double = 2.36) {
-  val as: Array[DenseMatrix[Double]] = Array.fill(numArms)(DenseMatrix.eye(numFeatures))
-  val bs: Array[DenseVector[Double]] = Array.fill(numArms)(DenseVector.zeros(numFeatures))
+class LinUCBPolicy(numArms: Int, numFeatures: Int, alpha: Double = 2.36)
+  extends ContextualBanditPolicy(numArms, numFeatures) {
+  override protected def estimateRewards(features: DenseVector[Double],
+                                         armFeaturesAcc: DenseMatrix[Double],
+                                         armRewardsAcc: DenseVector[Double]): Double = {
+    // TODO: Should be able to optimize code by only computing coefficientEstimate after
+    // updates. Would require an update to ContextualBanditPolicy to apply optimization
+    // to all contextual bandits.
+    val coefficientEstimate = armFeaturesAcc \ armRewardsAcc
+    coefficientEstimate.t*features + alpha*sqrt(features.t*(armFeaturesAcc \ features))
+  }
+}
 
-  def chooseArm(features: DenseVector[Double]): Int = {
-    var arm = 0
-    var bestArm = -1
-    var bestArmEstimate = Double.NegativeInfinity
-    while (arm < numArms) {
-      val (a, b) = getState(arm)
-      val coefficientEstimate = a \ b
-      val rewardEstimate = coefficientEstimate.t*features + alpha*sqrt(features.t*(a \ features))
+/**
+ * Note: Unplayed arms will default to zero reward. Fine in the case where our rewards
+ * are strictly negative (e.g. reward = -1*runtime), but otherwise could cause issues.
+ *
+ * @param numArms
+ * @param numFeatures
+ * @param epsilon
+ */
+class ContextualEpsilonGreedyPolicy(numArms: Int, numFeatures: Int, epsilon: Double = 0.2)
+  extends ContextualBanditPolicy(numArms, numFeatures) {
+  override def chooseArm(features: DenseVector[Double]): Int = {
+    if (scala.util.Random.nextFloat() >= epsilon) {
+      super.chooseArm(features)
+    } else {
+      scala.util.Random.nextInt(numArms)
+    }
+  }
 
-      if (rewardEstimate > bestArmEstimate) {
-        bestArm = arm
-        bestArmEstimate = rewardEstimate
-      }
-      arm += 1
+  override protected def estimateRewards(features: DenseVector[Double],
+                                         armFeaturesAcc: DenseMatrix[Double],
+                                         armRewardsAcc: DenseVector[Double]): Double = {
+    // Note: Unplayed arms will default to zero reward. Fine
+    val coefficientEstimate = armFeaturesAcc \ armRewardsAcc
+    coefficientEstimate.t*features
+  }
+}
+
+abstract class BanditPolicy(numArms: Int) extends Serializable {
+  @transient lazy private val stateLock = this
+  private val totalPlays: Array[Long] = Array.fill(numArms)(0L)
+  private val totalRewards: Array[Double] = Array.fill(numArms)(0.0)
+
+  def chooseArm(plays: Int): Int = {
+    val rewards = estimateRewards(plays)
+    val maxReward = rewards.max
+    val bestArms = rewards.zipWithIndex.filter(_._1 == maxReward)
+    bestArms(scala.util.Random.nextInt(bestArms.length))._2
+  }
+
+  private def estimateRewards(plays: Int): Seq[Double] = {
+    val (playsCopy, rewardsCopy) = stateLock.synchronized {
+      (totalPlays.clone(), totalRewards.clone())
     }
 
-    bestArm
+    estimateRewards(plays, playsCopy, rewardsCopy)
   }
 
-  protected def getState(arm: Int): (DenseMatrix[Double], DenseVector[Double]) = this.synchronized {
-    (as(arm), bs(arm))
+  protected def estimateRewards(playsToMake: Int,
+                                totalPlays: Array[Long],
+                                totalRewards: Array[Double]): Seq[Double]
+
+  def provideFeedback(arm: Int, plays: Int, reward: Double): Unit = stateLock.synchronized {
+    totalPlays(arm) += plays
+    totalRewards(arm) += reward
   }
 
-  protected def addToState(arm: Int, a: DenseMatrix[Double], b: DenseVector[Double]): Unit =
-    this.synchronized {
-    as(arm) = as(arm) + a
-    bs(arm) = bs(arm) + b
+  /**
+   * Warning: Does not lock the state of the other policy!
+   * @param otherPolicy
+   */
+  def subtractState(otherPolicy: BanditPolicy): Unit = stateLock.synchronized {
+    for (arm <- 0 until numArms) {
+      totalPlays(arm) -= otherPolicy.totalPlays(arm)
+      totalRewards(arm) -= otherPolicy.totalRewards(arm)
+    }
   }
 
-  def updateState(features: DenseVector[Double], arm: Int, reward: Double): Unit = {
-    val xxT = features * features.t
-    val rx = reward * features
-    addToState(arm, xxT, rx)
+  /**
+   * Warning: Does not lock the state of the other policy!
+   * @param otherPolicy
+   */
+  def addState(otherPolicy: BanditPolicy): Unit = stateLock.synchronized {
+    for (arm <- 0 until numArms) {
+      totalPlays(arm) += otherPolicy.totalPlays(arm)
+      totalRewards(arm) += otherPolicy.totalRewards(arm)
+    }
   }
 }
 
@@ -105,122 +273,46 @@ class LinUCBState(numArms: Int, numFeatures: Int, alpha: Double = 2.36) {
  *
  * @param numArms
  */
-class UCB1State(numArms: Int) {
-  var totalPlays = 0L
-  val plays: Array[Long] = Array.fill(numArms)(0L)
-  val rewards: Array[Double] = Array.fill(numArms)(0.0)
-
-  def chooseArm(): Int = {
-    var arm = 0
-    var bestArm = -1
-    var bestArmEstimate = Double.NegativeInfinity
-    val n = getTotalPlays()
-    if (n >= numArms) {
-      while (arm < numArms) {
-        val (playsForThisArm, rewardsForThisArm) = getState(arm)
-        val rewardEstimate = if (playsForThisArm > 0) {
-          // If the arm has been played, compute a reward.
-          (rewardsForThisArm / playsForThisArm) + math.sqrt(2.0*math.log(n)/playsForThisArm)
-
-        } else {
-          Double.PositiveInfinity
-        }
-
-        if (rewardEstimate > bestArmEstimate) {
-          bestArm = arm
-          bestArmEstimate = rewardEstimate
-        }
-
-        arm += 1
-      }
-    } else {
-      // Choose a random unplayed arm
-      val armsWithNoPlays = plays.zipWithIndex.filter(_._1==0).map(_._2)
-      if (armsWithNoPlays.length > 0) {
-        bestArm = armsWithNoPlays(scala.util.Random.nextInt(armsWithNoPlays.length))
+class UCB1Policy(numArms: Int) extends BanditPolicy(numArms) {
+  override protected def estimateRewards(playsToMake: Int,
+                                         totalPlays: Array[Long],
+                                         totalRewards: Array[Double]): Seq[Double] = {
+    val n = totalPlays.sum
+    (0 until numArms).map { arm =>
+      if (totalPlays(arm) > 0) {
+        (totalRewards(arm) / totalPlays(arm)) + math.sqrt(2.0*math.log(n)/totalPlays(arm))
       } else {
-        // All the arms have been played & feedback has been provided while this has been happening
-        bestArm = chooseArm()
+        Double.PositiveInfinity
       }
     }
-
-    bestArm
-  }
-
-  protected def getState(arm: Int): (Long, Double) = this.synchronized {
-    (plays(arm), rewards(arm))
-  }
-
-  protected def getTotalPlays(): Long = this.synchronized {
-    totalPlays
-  }
-
-  protected def addToState(arm: Int, numPlays: Long, totalRewards: Double): Unit =
-    this.synchronized {
-      plays(arm) += numPlays
-      rewards(arm) += totalRewards
-      totalPlays += numPlays
-    }
-
-  def updateState(arm: Int, reward: Double): Unit = {
-    addToState(arm, 1, reward)
   }
 }
 
 /**
  * Epsilon-greedy
  *
- * Fixme: The first action made by each thread will be to select the last arm
- *
  * @param numArms
  * @param epsilon Percent of the time to explore as opposed to exploit. Value between 0 and 1.
  */
-class EpsilonGreedyState(numArms: Int, epsilon: Double) {
-  val plays: Array[Long] = Array.fill(numArms)(0L)
-  val rewards: Array[Double] = Array.fill(numArms)(0.0)
-
-  def chooseArm(): Int = {
-    var arm = 0
-    var bestArm = -1
-    var bestArmEstimate = Double.NegativeInfinity
-    val rand = scala.util.Random.nextFloat()
-    if (rand > epsilon) {
-      // Exploit: Choose the best arm
-      while (arm < numArms) {
-        val (playsForThisArm, rewardsForThisArm) = getState(arm)
-        val rewardEstimate = if (playsForThisArm > 0) {
-          // If the arm has been played, compute a reward.
-          rewardsForThisArm / playsForThisArm
-        } else {
-          Double.PositiveInfinity
-        }
-
-        if (rewardEstimate > bestArmEstimate) {
-          bestArm = arm
-          bestArmEstimate = rewardEstimate
-        }
-
-        arm += 1
-      }
+class EpsilonGreedyPolicy(numArms: Int, epsilon: Double) extends BanditPolicy(numArms) {
+  override def chooseArm(plays: Int): Int = {
+    if (scala.util.Random.nextFloat() >= epsilon) {
+      super.chooseArm(plays)
     } else {
-      // Explore: Choose a random arm
-      bestArm = scala.util.Random.nextInt(numArms)
+      scala.util.Random.nextInt(numArms)
     }
-
-    bestArm
   }
 
-  protected def getState(arm: Int): (Long, Double) = this.synchronized {
-    (plays(arm), rewards(arm))
-  }
-
-  protected def addToState(arm: Int, numPlays: Long, totalRewards: Double): Unit =
-    this.synchronized {
-      plays(arm) += numPlays
-      rewards(arm) += totalRewards
+  override protected def estimateRewards(playsToMake: Int,
+                                         totalPlays: Array[Long],
+                                         totalRewards: Array[Double]): Seq[Double] = {
+    (0 until numArms).map { arm =>
+      if (totalPlays(arm) > 0) {
+        totalRewards(arm) / totalPlays(arm)
+      } else {
+        Double.PositiveInfinity
+      }
     }
-
-  def updateState(arm: Int, reward: Double): Unit = {
-    addToState(arm, 1, reward)
   }
 }
+
