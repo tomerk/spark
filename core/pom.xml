@@ -83,6 +83,10 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
+      <groupId>org.scalanlp</groupId>
+      <artifactId>breeze_${scala.binary.version}</artifactId>
+    </dependency>
+    <dependency>
       <groupId>net.java.dev.jets3t</groupId>
       <artifactId>jets3t</artifactId>
     </dependency>
