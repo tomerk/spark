@@ -84,7 +84,7 @@ abstract class ContextualBandit[A: ClassTag, B: ClassTag] {
 
 // Future work: lower-overhead, sgd based updates!
 
-abstract class ContextualBanditPolicy(numArms: Int, numFeatures: Int) extends Serializable {
+abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) extends Serializable {
   @transient lazy private val stateLock = this
   val featuresAccumulator: Array[DenseMatrix[Double]] = {
     Array.fill(numArms)(DenseMatrix.eye(numFeatures))
@@ -238,7 +238,7 @@ class ContextualEpsilonGreedyPolicy(numArms: Int, numFeatures: Int, epsilon: Dou
   }
 }
 
-abstract class BanditPolicy(numArms: Int) extends Serializable {
+abstract class BanditPolicy(val numArms: Int) extends Serializable {
   @transient lazy private val stateLock = this
   private val totalPlays: Array[Long] = Array.fill(numArms)(0L)
   private val totalRewards: Array[Double] = Array.fill(numArms)(0.0)
