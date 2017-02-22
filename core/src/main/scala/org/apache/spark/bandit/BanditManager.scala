@@ -17,12 +17,11 @@
 
 package org.apache.spark.bandit
 
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 import scala.reflect.ClassTag
-
-import breeze.linalg.DenseVector
-
+import breeze.linalg.{DenseMatrix, DenseVector}
 import org.apache.spark.bandit.policies._
 import org.apache.spark.internal.Logging
 import org.apache.spark.{SecurityManager, SparkConf}
@@ -35,6 +34,9 @@ private[spark] class BanditManager(
   extends Logging {
 
   private var initialized = false
+  private val policies = new ConcurrentHashMap[Long, (BanditPolicy, (Array[Long], Array[Double]))]()
+  private val contextualPolicies = new ConcurrentHashMap[Long,
+      (ContextualBanditPolicy, (Array[DenseMatrix[Double]], Array[DenseVector[Double]]))]()
 
   initialize()
 
@@ -51,22 +53,50 @@ private[spark] class BanditManager(
 
   }
 
-  def registerOrLoadPolicy(id: Long, policy: BanditPolicy): BanditPolicy = ???
+  def registerOrLoadPolicy(id: Long, policy: BanditPolicy): BanditPolicy = {
+    policies.putIfAbsent(id, (policy,
+      (Array.fill(policy.numArms)(0), Array.fill(policy.numArms)(0))))
+    policies.get(id)._1
+  }
 
-  def registerOrLoadPolicy(id: Long, policy: ContextualBanditPolicy): ContextualBanditPolicy = ???
+  def registerOrLoadPolicy(id: Long, policy: ContextualBanditPolicy): ContextualBanditPolicy = {
+    val initFeatures: Array[DenseMatrix[Double]] = Array.fill(policy.numArms) {
+      DenseMatrix.zeros(policy.numFeatures, policy.numFeatures)
+    }
 
-  def provideFeedback(id: Long, policy: BanditPolicy, arm: Int, numPlays: Long, reward: Double): Unit = {
+    val initRewards: Array[DenseVector[Double]] = Array.fill(policy.numArms) {
+      DenseVector.zeros(policy.numFeatures)
+    }
 
+    contextualPolicies.putIfAbsent(id, (policy,
+      (initFeatures, initRewards)))
+    contextualPolicies.get(id)._1
+  }
+
+  def provideFeedback(id: Long, arm: Int, plays: Long, reward: Double): Unit = {
+    val (policy, (localPlays, localRewards)) = policies.get(id)
+    policy.stateLock.synchronized {
+      policy.provideFeedback(arm, plays, reward)
+      localPlays(arm) += plays
+      localRewards(arm) += reward
+    }
   }
 
   def provideContextualFeedback(id: Long,
-                                policy: ContextualBanditPolicy,
                                 arm: Int,
                                 features: DenseVector[Double],
                                 reward: Double): Unit = {
+    val (policy, (localFeatures, localRewards)) = contextualPolicies.get(id)
+    val xxT = features * features.t
+    val rx = reward * features
+
+    policy.stateLock.synchronized {
+      policy.provideFeedback(arm, xxT, rx)
+      localFeatures(arm) = localFeatures(arm) + xxT
+      localRewards(arm) = localRewards(arm) + rx
+    }
 
   }
-
 
   private val nextBanditId = new AtomicLong(0)
 
@@ -118,5 +148,10 @@ private[spark] class BanditManager(
     new ContextualBandit(id, arms, features, policy)
   }
 
-  def removeBandit(id: Long, removeFromDriver: Boolean, blocking: Boolean) = ???
+  def removeBandit(id: Long, removeFromDriver: Boolean, blocking: Boolean): Unit = {
+    policies.remove(id)
+    contextualPolicies.remove(id)
+
+    // TODO: Add distributed delete also
+  }
 }

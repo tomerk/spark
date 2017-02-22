@@ -52,7 +52,7 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     val endTime = System.nanoTime()
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
-    banditManager.provideContextualFeedback(id, policy, arm, features, startTime - endTime)
+    banditManager.provideContextualFeedback(id, arm, features, startTime - endTime)
     result
   }
 
@@ -72,7 +72,7 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     val endTime = System.nanoTime()
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
-    banditManager.provideContextualFeedback(id, policy, arm, features, startTime - endTime)
+    banditManager.provideContextualFeedback(id, arm, features, startTime - endTime)
     result
   }
 
