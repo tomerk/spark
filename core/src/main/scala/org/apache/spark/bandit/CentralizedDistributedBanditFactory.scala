@@ -18,6 +18,7 @@
 package org.apache.spark.bandit
 
 import breeze.linalg.DenseVector
+import org.apache.spark.bandit.policies.{BanditPolicy, ContextualBanditPolicy}
 import org.apache.spark.{SecurityManager, SparkConf}
 
 import scala.reflect.ClassTag

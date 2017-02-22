@@ -17,15 +17,14 @@
 
 package org.apache.spark.bandit
 
-import org.apache.spark.bandit.policies.{BanditPolicy, ContextualBanditPolicy}
-
 import scala.reflect.ClassTag
 
 /**
- * The bandit class is used for dynamically tuned methods appearing in spark tasks.
+ * The contextual bandit class is used for dynamically tuned methods appearing in spark tasks.
  */
-abstract class Bandit[A: ClassTag, B: ClassTag] {
+abstract class ContextualBandit[A: ClassTag, B: ClassTag] {
   val id: Long
+
   def apply(in: A): B
 
   /**
@@ -40,16 +39,3 @@ abstract class Bandit[A: ClassTag, B: ClassTag] {
   def saveTunedSettings(file: String): Unit
   def loadTunedSettings(file: String): Unit
 }
-
-
-
-// Also need state access & merging code that is complete, not just per-arm??!!
-// (ALTHOUGH if we can send state updates for each arm separately it could lower
-// the total required communication, but that's a premature optimization)
-
-
-// The state & state updates are basically the same for thompson's sampling and LinUCB
-// (will need to note that the thompson sampling code was modified to be on disjoint models)
-// The only difference is the reward computation (and it may be worth pre-computing the inverse?)
-
-// Future work: lower-overhead, sgd based updates!?

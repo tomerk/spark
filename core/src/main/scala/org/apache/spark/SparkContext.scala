@@ -42,7 +42,8 @@ import org.apache.hadoop.mapred.{FileInputFormat, InputFormat, JobConf, Sequence
 import org.apache.hadoop.mapreduce.{InputFormat => NewInputFormat, Job => NewHadoopJob}
 import org.apache.hadoop.mapreduce.lib.input.{FileInputFormat => NewFileInputFormat}
 import org.apache.spark.annotation.DeveloperApi
-import org.apache.spark.bandit.{Bandit, BanditPolicy, ContextualBandit, ContextualBanditPolicy}
+import org.apache.spark.bandit.policies.{BanditPolicy, ContextualBanditPolicy}
+import org.apache.spark.bandit.{Bandit, ContextualBandit}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.deploy.{LocalSparkCluster, SparkHadoopUtil}
 import org.apache.spark.input.{FixedLengthBinaryInputFormat, PortableDataStream, StreamInputFormat, WholeTextFileInputFormat}
