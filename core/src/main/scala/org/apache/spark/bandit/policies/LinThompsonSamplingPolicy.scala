@@ -36,7 +36,7 @@ import breeze.stats.distributions.MultivariateGaussian
  *          so I'll default to 5? Larger v means larger variance & more
  *          weight on sampling arms w/o the highest expectation
  */
-class LinThompsonSamplingPolicy(numArms: Int, numFeatures: Int, v: Double = 5.0)
+private[spark] class LinThompsonSamplingPolicy(numArms: Int, numFeatures: Int, v: Double)
   extends ContextualBanditPolicy(numArms, numFeatures) {
   override protected def estimateRewards(features: DenseVector[Double],
                                          armFeaturesAcc: DenseMatrix[Double],

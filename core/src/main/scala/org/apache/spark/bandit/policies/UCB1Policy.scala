@@ -23,7 +23,7 @@ package org.apache.spark.bandit.policies
  *
  * @param numArms
  */
-class UCB1Policy(numArms: Int) extends BanditPolicy(numArms) {
+private[spark] class UCB1Policy(numArms: Int) extends BanditPolicy(numArms) {
   override protected def estimateRewards(playsToMake: Int,
                                          totalPlays: Array[Long],
                                          totalRewards: Array[Double]): Seq[Double] = {

@@ -17,28 +17,62 @@
 
 package org.apache.spark.bandit
 
-import org.apache.spark.bandit.policies.{BanditPolicy, ContextualBanditPolicy}
-
 import scala.reflect.ClassTag
+import org.apache.spark.SparkEnv
+import org.apache.spark.bandit.policies.BanditPolicy
+import org.apache.spark.internal.Logging
 
 /**
  * The bandit class is used for dynamically tuned methods appearing in spark tasks.
  */
-abstract class Bandit[A: ClassTag, B: ClassTag] {
-  val id: Long
-  def apply(in: A): B
+class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
+                                                       val arms: Seq[A => B],
+                                                       private var initPolicy: BanditPolicy
+                                                      ) extends Serializable with Logging {
+
+  @transient private lazy val banditManager = SparkEnv.get.banditManager
+  @transient private lazy val policy = {
+    initPolicy = banditManager.registerOrLoadPolicy(id, initPolicy)
+    initPolicy
+  }
+
+  /**
+   * Given a single input, choose a single arm to apply to that input, and
+   * update the policy with the observed runtime.
+   *
+   * @param in The input item
+   */
+  def apply(in: A): B = {
+    val arm = policy.chooseArm(1)
+    val startTime = System.nanoTime()
+    val result = arms(arm).apply(in)
+    val endTime = System.nanoTime()
+
+    // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
+    banditManager.provideFeedback(id, policy, arm, 1, startTime - endTime)
+    result
+  }
 
   /**
    * A vectorized bandit strategy. Given a sequence of input, choose a single arm
-   * to apply to all of the input. The learning will treat this as the reward
-   * averaged over all the input items, given this decision.
+   * to apply to all of the input. The learning for all the items will be batched
+   * given that one arm was selected.
    *
    * @param in The vector of input
    */
-  def vectorizedApply(in: Seq[A]): Seq[B]
+  def vectorizedApply(in: Seq[A]): Seq[B] = {
+    val arm = policy.chooseArm(in.length)
+    val startTime = System.nanoTime()
+    val result = in.map(arms(arm))
+    val endTime = System.nanoTime()
 
-  def saveTunedSettings(file: String): Unit
-  def loadTunedSettings(file: String): Unit
+    // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
+    banditManager.provideFeedback(id, policy, arm, in.length, startTime - endTime)
+    result
+  }
+
+  def saveTunedSettings(file: String): Unit = ???
+  def loadTunedSettings(file: String): Unit = ???
 }
 
 

@@ -23,7 +23,8 @@ package org.apache.spark.bandit.policies
  * @param numArms
  * @param epsilon Percent of the time to explore as opposed to exploit. Value between 0 and 1.
  */
-class EpsilonGreedyPolicy(numArms: Int, epsilon: Double) extends BanditPolicy(numArms) {
+private[spark] class EpsilonGreedyPolicy(numArms: Int, epsilon: Double)
+  extends BanditPolicy(numArms) {
   override def chooseArm(plays: Int): Int = {
     if (scala.util.Random.nextFloat() >= epsilon) {
       super.chooseArm(plays)
