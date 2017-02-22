@@ -55,9 +55,11 @@ private[spark] class BanditManager(
 
   def newBandit[A: ClassTag, B: ClassTag](arms: Seq[A => B],
                                           policy: BanditPolicy,
-                                          isLocal: Boolean,
-                                          id: Long): Bandit[A, B] = {
-    banditFactory.newBandit(arms, policy, isLocal,
+                                          isLocal: Boolean): Bandit[A, B] = {
+    banditFactory.newBandit(
+      arms,
+      policy,
+      isLocal,
       nextBanditId.getAndIncrement())
   }
 

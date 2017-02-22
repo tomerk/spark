@@ -19,19 +19,20 @@ package org.apache.spark
 
 import java.io._
 import java.lang.reflect.Constructor
-import java.net.{URI}
+import java.net.URI
 import java.util.{Arrays, Locale, Properties, ServiceLoader, UUID}
 import java.util.concurrent.{ConcurrentHashMap, ConcurrentMap}
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicReference}
+
+import breeze.linalg.DenseVector
 
 import scala.collection.JavaConverters._
 import scala.collection.Map
 import scala.collection.generic.Growable
 import scala.collection.mutable.HashMap
 import scala.language.implicitConversions
-import scala.reflect.{classTag, ClassTag}
+import scala.reflect.{ClassTag, classTag}
 import scala.util.control.NonFatal
-
 import com.google.common.collect.MapMaker
 import org.apache.commons.lang3.SerializationUtils
 import org.apache.hadoop.conf.Configuration
@@ -40,8 +41,8 @@ import org.apache.hadoop.io.{ArrayWritable, BooleanWritable, BytesWritable, Doub
 import org.apache.hadoop.mapred.{FileInputFormat, InputFormat, JobConf, SequenceFileInputFormat, TextInputFormat}
 import org.apache.hadoop.mapreduce.{InputFormat => NewInputFormat, Job => NewHadoopJob}
 import org.apache.hadoop.mapreduce.lib.input.{FileInputFormat => NewFileInputFormat}
-
 import org.apache.spark.annotation.DeveloperApi
+import org.apache.spark.bandit.{Bandit, BanditPolicy, ContextualBandit, ContextualBanditPolicy}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.deploy.{LocalSparkCluster, SparkHadoopUtil}
 import org.apache.spark.input.{FixedLengthBinaryInputFormat, PortableDataStream, StreamInputFormat, WholeTextFileInputFormat}
@@ -1413,6 +1414,45 @@ class SparkContext(config: SparkConf) extends Logging {
     logInfo("Created broadcast " + bc.id + " from " + callSite.shortForm)
     cleaner.foreach(_.registerBroadcastForCleanup(bc))
     bc
+  }
+
+  /**
+   * Creates a new bandit.
+   *
+   * @param arms The arms to choose between
+   * @param policy The learning policy to use
+   */
+  def bandit[A: ClassTag, B: ClassTag](arms: Seq[A => B], policy: BanditPolicy): Bandit[A, B] = {
+    assertNotStopped()
+    require(arms.length == policy.numArms,
+      s"Policy specified for ${policy.numArms }, but ${arms.length} provided.")
+    val cleanedArms = arms.map(arm => clean(arm))
+    val b = env.banditManager.newBandit[A, B](cleanedArms, policy, isLocal)
+    val callSite = getCallSite
+    logInfo("Created bandit " + b.id + " from " + callSite.shortForm)
+    cleaner.foreach(_.registerBanditForCleanup(b))
+    b
+  }
+
+  /**
+   * Creates a new contextual bandit.
+   *
+   * @param arms The arms to choose between
+   * @param policy The learning policy to use
+   */
+  def contextualBandit[A: ClassTag, B: ClassTag](arms: Seq[A => B],
+                                                 features: A => DenseVector[Double],
+                                                 policy: ContextualBanditPolicy): ContextualBandit[A, B] = {
+    assertNotStopped()
+    require(arms.length == policy.numArms,
+      s"Policy specified for ${policy.numArms }, but ${arms.length} provided.")
+    val cleanedArms = arms.map(arm => clean(arm))
+    val cleanedFeatures = clean(features)
+    val b = env.banditManager.newContextualBandit[A, B](cleanedArms, cleanedFeatures, policy, isLocal)
+    val callSite = getCallSite
+    logInfo("Created bandit " + b.id + " from " + callSite.shortForm)
+    cleaner.foreach(_.registerContextualBanditForCleanup(b))
+    b
   }
 
   /**
