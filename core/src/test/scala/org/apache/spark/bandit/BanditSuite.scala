@@ -57,7 +57,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
     assert(results.collect().toSet === (1 to numSlaves).map(x => (x, 10)).toSet)
   }
 
-  test("Test Bandit Timings") {
+  test("Test Contextual Bandit Timings") {
     val numFeatures = 3
     val arms = 10
     val policy = new LinUCBPolicy(numArms = arms, numFeatures = numFeatures)
@@ -75,11 +75,31 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
       logInfo(s"$i: $arm")
       val reward = rewardDist.draw() - (if (arm == bestArm) 10 else 13)
       policy.provideFeedback(arm, featureVec, reward)
-      // mat * mat
       i += 1
     }
     val end = System.currentTimeMillis()
     logInfo(s"${(end - start)/10000.0} millis per round")
   }
 
+  test("Test Bandit Timings") {
+    val arms = 10
+    val policy = new GaussianThompsonSamplingPolicy(numArms = arms)
+
+    val bestArm = 3
+
+    val rewardDist = Rand.gaussian
+
+    var i = 0
+    val start = System.currentTimeMillis()
+    while (i < 10000) {
+      val arm = policy.chooseArm(1)
+
+      logInfo(s"$i: $arm")
+      val reward = rewardDist.draw() - (if (arm == bestArm) 10 else 10.5)
+      policy.provideFeedback(arm, 1, reward)
+      i += 1
+    }
+    val end = System.currentTimeMillis()
+    logInfo(s"${(end - start)/10000.0} millis per round")
+  }
 }

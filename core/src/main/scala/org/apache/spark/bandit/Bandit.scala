@@ -19,7 +19,7 @@ package org.apache.spark.bandit
 
 import breeze.linalg.{DenseMatrix, DenseVector, inv}
 import breeze.numerics.sqrt
-import breeze.stats.distributions.MultivariateGaussian
+import breeze.stats.distributions.{Gaussian, MultivariateGaussian}
 
 import scala.reflect.ClassTag
 
@@ -27,6 +27,7 @@ import scala.reflect.ClassTag
  * The bandit class is used for dynamically tuned methods appearing in spark tasks.
  */
 abstract class Bandit[A: ClassTag, B: ClassTag] {
+  val id: Long
   def apply(in: A): B
 
   /**
@@ -41,6 +42,28 @@ abstract class Bandit[A: ClassTag, B: ClassTag] {
   def saveTunedSettings(file: String): Unit
   def loadTunedSettings(file: String): Unit
 }
+
+/**
+ * The contextual bandit class is used for dynamically tuned methods appearing in spark tasks.
+ */
+abstract class ContextualBandit[A: ClassTag, B: ClassTag] {
+  val id: Long
+
+  def apply(in: A): B
+
+  /**
+   * A vectorized bandit strategy. Given a sequence of input, choose a single arm
+   * to apply to all of the input. The learning will treat this as the reward
+   * averaged over all the input items, given this decision.
+   *
+   * @param in The vector of input
+   */
+  def vectorizedApply(in: Seq[A]): Seq[B]
+
+  def saveTunedSettings(file: String): Unit
+  def loadTunedSettings(file: String): Unit
+}
+
 
 // FIXME!
 // TODO! FIXME! Write these w/ a method to just compute rewards, that way
@@ -281,6 +304,29 @@ class UCB1Policy(numArms: Int) extends BanditPolicy(numArms) {
     (0 until numArms).map { arm =>
       if (totalPlays(arm) > 0) {
         (totalRewards(arm) / totalPlays(arm)) + math.sqrt(2.0*math.log(n)/totalPlays(arm))
+      } else {
+        Double.PositiveInfinity
+      }
+    }
+  }
+}
+
+/**
+ * Thompson Sampling with Gaussian priors that have a variance of 1,
+ * from:
+ * https://bandits.wikischolars.columbia.edu/file/view/Lecture+4.pdf
+ * @param numArms
+ */
+class GaussianThompsonSamplingPolicy(numArms: Int) extends BanditPolicy(numArms) {
+  override protected def estimateRewards(playsToMake: Int,
+                                         totalPlays: Array[Long],
+                                         totalRewards: Array[Double]): Seq[Double] = {
+    (0 until numArms).map { arm =>
+      if (totalPlays(arm) > 0) {
+        new Gaussian(
+          totalRewards(arm) / (totalPlays(arm) + 1.0),
+          1.0 / totalPlays(arm)
+        ).draw()
       } else {
         Double.PositiveInfinity
       }

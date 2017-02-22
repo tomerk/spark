@@ -23,11 +23,10 @@ import java.util.Locale
 
 import scala.collection.mutable
 import scala.util.Properties
-
 import com.google.common.collect.MapMaker
-
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.api.python.PythonWorkerFactory
+import org.apache.spark.bandit.BanditManager
 import org.apache.spark.broadcast.BroadcastManager
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
@@ -63,6 +62,7 @@ class SparkEnv (
     val mapOutputTracker: MapOutputTracker,
     val shuffleManager: ShuffleManager,
     val broadcastManager: BroadcastManager,
+    val banditManager: BanditManager,
     val blockManager: BlockManager,
     val securityManager: SecurityManager,
     val metricsSystem: MetricsSystem,
@@ -302,6 +302,7 @@ object SparkEnv extends Logging {
     }
 
     val broadcastManager = new BroadcastManager(isDriver, conf, securityManager)
+    val banditManager = new BanditManager(isDriver, conf, securityManager)
 
     val mapOutputTracker = if (isDriver) {
       new MapOutputTrackerMaster(conf, broadcastManager, isLocal)
@@ -383,6 +384,7 @@ object SparkEnv extends Logging {
       mapOutputTracker,
       shuffleManager,
       broadcastManager,
+      banditManager,
       blockManager,
       securityManager,
       metricsSystem,

@@ -381,6 +381,7 @@ class CachedTableSuite extends QueryTest with SQLTestUtils with SharedSQLContext
       def rddCleaned(rddId: Int): Unit = {}
       def shuffleCleaned(shuffleId: Int): Unit = {}
       def broadcastCleaned(broadcastId: Long): Unit = {}
+      def banditCleaned(banditId: Long): Unit = {}
       def accumCleaned(accId: Long): Unit = {
         toBeCleanedAccIds.synchronized { toBeCleanedAccIds -= accId }
       }
