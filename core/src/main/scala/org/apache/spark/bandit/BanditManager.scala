@@ -19,12 +19,14 @@ package org.apache.spark.bandit
 
 import java.util.concurrent.atomic.AtomicLong
 
+import scala.reflect.ClassTag
+
 import breeze.linalg.DenseVector
-import org.apache.spark.bandit.policies.{BanditPolicy, ContextualBanditPolicy}
+
+import org.apache.spark.bandit.policies._
 import org.apache.spark.internal.Logging
 import org.apache.spark.{SecurityManager, SparkConf}
 
-import scala.reflect.ClassTag
 
 private[spark] class BanditManager(
     val isDriver: Boolean,
@@ -33,7 +35,6 @@ private[spark] class BanditManager(
   extends Logging {
 
   private var initialized = false
-  private var banditFactory: BanditFactory = null
 
   initialize()
 
@@ -41,38 +42,81 @@ private[spark] class BanditManager(
   private def initialize() {
     synchronized {
       if (!initialized) {
-        banditFactory = new CentralizedDistributedBanditFactory
-        banditFactory.initialize(isDriver, conf, securityManager)
         initialized = true
       }
     }
   }
 
   def stop() {
-    banditFactory.stop()
+
   }
+
+  def registerOrLoadPolicy(id: Long, policy: BanditPolicy): BanditPolicy = ???
+
+  def registerOrLoadPolicy(id: Long, policy: ContextualBanditPolicy): ContextualBanditPolicy = ???
+
+  def provideFeedback(id: Long, policy: BanditPolicy, arm: Int, numPlays: Long, reward: Double): Unit = {
+
+  }
+
+  def provideContextualFeedback(id: Long,
+                                policy: ContextualBanditPolicy,
+                                arm: Int,
+                                features: DenseVector[Double],
+                                reward: Double): Unit = {
+
+  }
+
 
   private val nextBanditId = new AtomicLong(0)
 
+  /**
+   * Creates a new bandit.
+   *
+   * @param arms The arms to choose between
+   * @param policyParams The learning policy to use
+   * @param isLocal whether we are in local mode (single JVM process)
+   */
   def newBandit[A: ClassTag, B: ClassTag](arms: Seq[A => B],
-                                          policy: BanditPolicy,
+                                          policyParams: BanditPolicyParams,
                                           isLocal: Boolean): Bandit[A, B] = {
-    banditFactory.newBandit(
-      arms,
-      policy,
-      isLocal,
-      nextBanditId.getAndIncrement())
+    val policy = policyParams match {
+      case EpsilonGreedyPolicyParams(epsilon) =>
+        new EpsilonGreedyPolicy(numArms = arms.length, epsilon)
+      case GaussianThompsonSamplingPolicyParams() =>
+        new GaussianThompsonSamplingPolicy(numArms = arms.length)
+      case UCB1PolicyParams() =>
+        new UCB1Policy(numArms = arms.length)
+    }
+
+    val id = nextBanditId.getAndIncrement()
+    new Bandit(id, arms, policy)
   }
 
+  /**
+   * Creates a new contextual bandit.
+   *
+   * @param arms The arms to choose between
+   * @param features The features computation to use for the bandit
+   * @param policyParams The learning policy to use
+   * @param isLocal whether we are in local mode (single JVM process)
+   */
   def newContextualBandit[A: ClassTag, B: ClassTag](arms: Seq[A => B],
                                                     features: A => DenseVector[Double],
-                                                    policy: ContextualBanditPolicy,
+                                                    policyParams: ContextualBanditPolicyParams,
                                                     isLocal: Boolean): ContextualBandit[A, B] = {
-    banditFactory.newContextualBandit(arms, features, policy, isLocal,
-      nextBanditId.getAndIncrement())
+    val policy = policyParams match {
+      case ContextualEpsilonGreedyPolicyParams(numFeatures, epsilon) =>
+        new ContextualEpsilonGreedyPolicy(numArms = arms.length, numFeatures, epsilon)
+      case LinThompsonSamplingPolicyParams(numFeatures, v) =>
+        new LinThompsonSamplingPolicy(numArms = arms.length, numFeatures, v)
+      case LinUCBPolicyParams(numFeatures, alpha) =>
+        new LinUCBPolicy(numArms = arms.length, numFeatures, alpha)
+    }
+
+    val id = nextBanditId.getAndIncrement()
+    new ContextualBandit(id, arms, features, policy)
   }
 
-  def removeBandit(id: Long, removeFromDriver: Boolean, blocking: Boolean) {
-    banditFactory.removeBandit(id, removeFromDriver, blocking)
-  }
+  def removeBandit(id: Long, removeFromDriver: Boolean, blocking: Boolean) = ???
 }

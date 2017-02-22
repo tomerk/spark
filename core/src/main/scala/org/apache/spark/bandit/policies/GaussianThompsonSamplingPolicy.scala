@@ -26,7 +26,7 @@ import breeze.stats.distributions.Gaussian
  *
  * @param numArms
  */
-class GaussianThompsonSamplingPolicy(numArms: Int) extends BanditPolicy(numArms) {
+private[spark] class GaussianThompsonSamplingPolicy(numArms: Int) extends BanditPolicy(numArms) {
   override protected def estimateRewards(playsToMake: Int,
                                          totalPlays: Array[Long],
                                          totalRewards: Array[Double]): Seq[Double] = {

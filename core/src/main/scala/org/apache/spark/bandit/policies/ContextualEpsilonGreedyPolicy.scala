@@ -27,7 +27,7 @@ import breeze.linalg.{DenseMatrix, DenseVector}
  * @param numFeatures
  * @param epsilon
  */
-class ContextualEpsilonGreedyPolicy(numArms: Int, numFeatures: Int, epsilon: Double = 0.2)
+private[spark] class ContextualEpsilonGreedyPolicy(numArms: Int, numFeatures: Int, epsilon: Double)
   extends ContextualBanditPolicy(numArms, numFeatures) {
   override def chooseArm(features: DenseVector[Double]): Int = {
     if (scala.util.Random.nextFloat() >= epsilon) {

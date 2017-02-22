@@ -17,8 +17,15 @@
 
 package org.apache.spark.bandit.policies
 
+import java.io.ObjectOutputStream
+
+sealed trait BanditPolicyParams
+case class EpsilonGreedyPolicyParams(epsilon: Double = 0.2) extends BanditPolicyParams
+case class UCB1PolicyParams() extends BanditPolicyParams
+case class GaussianThompsonSamplingPolicyParams() extends BanditPolicyParams
+
 abstract class BanditPolicy(val numArms: Int) extends Serializable {
-  @transient lazy private val stateLock = this
+  @transient lazy private[spark] val stateLock = this
   private val totalPlays: Array[Long] = Array.fill(numArms)(0L)
   private val totalRewards: Array[Double] = Array.fill(numArms)(0.0)
 
@@ -46,25 +53,18 @@ abstract class BanditPolicy(val numArms: Int) extends Serializable {
     totalRewards(arm) += reward
   }
 
-  /**
-   * Warning: Does not lock the state of the other policy!
-   * @param otherPolicy
-   */
-  def subtractState(otherPolicy: BanditPolicy): Unit = stateLock.synchronized {
-    for (arm <- 0 until numArms) {
-      totalPlays(arm) -= otherPolicy.totalPlays(arm)
-      totalRewards(arm) -= otherPolicy.totalRewards(arm)
+  def setState(plays: Array[Long], rewards: Array[Double]): Unit = stateLock.synchronized {
+    for (i <- 0 until numArms) {
+      totalPlays(i) = plays(i)
+      totalRewards(i) = rewards(i)
     }
   }
 
   /**
-   * Warning: Does not lock the state of the other policy!
-   * @param otherPolicy
+   * We make sure to capture the state lock before serialization
+   * @param out
    */
-  def addState(otherPolicy: BanditPolicy): Unit = stateLock.synchronized {
-    for (arm <- 0 until numArms) {
-      totalPlays(arm) += otherPolicy.totalPlays(arm)
-      totalRewards(arm) += otherPolicy.totalRewards(arm)
-    }
+  private def writeObject(out: ObjectOutputStream): Unit = stateLock.synchronized {
+    out.defaultWriteObject()
   }
 }

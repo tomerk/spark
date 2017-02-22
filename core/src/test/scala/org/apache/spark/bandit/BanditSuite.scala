@@ -61,7 +61,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
   test("Test Contextual Bandit Timings") {
     val numFeatures = 3
     val arms = 10
-    val policy = new LinUCBPolicy(numArms = arms, numFeatures = numFeatures)
+    val policy = new LinUCBPolicy(numArms = arms, numFeatures = numFeatures, 2.36)
 
     val bestArm = 3
 

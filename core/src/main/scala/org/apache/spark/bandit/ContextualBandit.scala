@@ -18,24 +18,64 @@
 package org.apache.spark.bandit
 
 import scala.reflect.ClassTag
+import breeze.linalg.DenseVector
+import org.apache.spark.SparkEnv
+import org.apache.spark.bandit.policies.ContextualBanditPolicy
+import org.apache.spark.internal.Logging
 
 /**
  * The contextual bandit class is used for dynamically tuned methods appearing in spark tasks.
  */
-abstract class ContextualBandit[A: ClassTag, B: ClassTag] {
-  val id: Long
+class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
+                                                 val arms: Seq[A => B],
+                                                 val featureExtractor: A => DenseVector[Double],
+                                                 private var initPolicy: ContextualBanditPolicy
+                                                ) extends Serializable with Logging {
 
-  def apply(in: A): B
+  @transient private lazy val banditManager = SparkEnv.get.banditManager
+  @transient private lazy val policy = {
+    initPolicy = banditManager.registerOrLoadPolicy(id, initPolicy)
+    initPolicy
+  }
+
+  /**
+   * Given a single input, choose a single arm to apply to that input, and
+   * update the policy with the observed runtime.
+   *
+   * @param in The input item
+   */
+  def apply(in: A): B = {
+    val features = featureExtractor(in)
+    val arm = policy.chooseArm(features)
+    val startTime = System.nanoTime()
+    val result = arms(arm).apply(in)
+    val endTime = System.nanoTime()
+
+    // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
+    banditManager.provideContextualFeedback(id, policy, arm, features, startTime - endTime)
+    result
+  }
 
   /**
    * A vectorized bandit strategy. Given a sequence of input, choose a single arm
-   * to apply to all of the input. The learning will treat this as the reward
-   * averaged over all the input items, given this decision.
+   * to apply to all of the input. The learning for all the items will be batched
+   * given that one arm was selected.
    *
    * @param in The vector of input
    */
-  def vectorizedApply(in: Seq[A]): Seq[B]
+  def vectorizedApply(in: Seq[A]): Seq[B] = {
+    // Because our contextual models our linear, the features is just over the individal inputs
+    val features = in.map(featureExtractor).reduce(_ + _)
+    val arm = policy.chooseArm(features)
+    val startTime = System.nanoTime()
+    val result = in.map(arms(arm))
+    val endTime = System.nanoTime()
 
-  def saveTunedSettings(file: String): Unit
-  def loadTunedSettings(file: String): Unit
+    // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
+    banditManager.provideContextualFeedback(id, policy, arm, features, startTime - endTime)
+    result
+  }
+
+  def saveTunedSettings(file: String): Unit = ???
+  def loadTunedSettings(file: String): Unit = ???
 }

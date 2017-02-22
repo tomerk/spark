@@ -17,10 +17,20 @@
 
 package org.apache.spark.bandit.policies
 
+import java.io.ObjectOutputStream
+
 import breeze.linalg.{DenseMatrix, DenseVector}
 
+sealed trait ContextualBanditPolicyParams
+case class ContextualEpsilonGreedyPolicyParams(numFeatures: Int, epsilon: Double = 0.2)
+  extends ContextualBanditPolicyParams
+case class LinUCBPolicyParams(numFeatures: Int, alpha: Double = 2.36)
+  extends ContextualBanditPolicyParams
+case class LinThompsonSamplingPolicyParams(numFeatures: Int, v: Double = 5.0)
+  extends ContextualBanditPolicyParams
+
 abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) extends Serializable {
-  @transient lazy private val stateLock = this
+  @transient lazy private[spark] val stateLock = this
   val featuresAccumulator: Array[DenseMatrix[Double]] = {
     Array.fill(numArms)(DenseMatrix.eye(numFeatures))
   }
@@ -59,27 +69,19 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
     }
   }
 
-  /**
-   * Warning: Does not lock the state of the other policy!
-   * @param otherPolicy
-   */
-  def subtractState(otherPolicy: ContextualBanditPolicy): Unit = {
+  def setState(features: Array[DenseMatrix[Double]],
+               rewards: Array[DenseVector[Double]]): Unit = {
     for (arm <- 0 until numArms) stateLock.synchronized {
-      // Not an in-place update for the matrices, leaves them valid when used elsewhere!
-      featuresAccumulator(arm) = featuresAccumulator(arm) - otherPolicy.featuresAccumulator(arm)
-      rewardAccumulator(arm) = rewardAccumulator(arm) - otherPolicy.rewardAccumulator(arm)
+      featuresAccumulator(arm) = features(arm)
+      rewardAccumulator(arm) = rewards(arm)
     }
   }
 
   /**
-   * Warning: Does not lock the state of the other policy!
-   * @param otherPolicy
+   * We make sure to capture the state lock before serialization
+   * @param out
    */
-  def addState(otherPolicy: ContextualBanditPolicy): Unit = {
-    for (arm <- 0 until numArms) stateLock.synchronized {
-      // Not an in-place update for the matrices, leaves them valid when used elsewhere!
-      featuresAccumulator(arm) = featuresAccumulator(arm) + otherPolicy.featuresAccumulator(arm)
-      rewardAccumulator(arm) = rewardAccumulator(arm) + otherPolicy.rewardAccumulator(arm)
-    }
+  private def writeObject(out: ObjectOutputStream): Unit = stateLock.synchronized {
+    out.defaultWriteObject()
   }
 }

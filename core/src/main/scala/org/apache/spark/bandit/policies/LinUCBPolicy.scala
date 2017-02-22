@@ -36,7 +36,7 @@ import breeze.numerics.sqrt
  *              where 1-delta roughly corresponds to the probability that the
  *              estimated value has the true value within it's confidence bound
  */
-class LinUCBPolicy(numArms: Int, numFeatures: Int, alpha: Double = 2.36)
+private[spark] class LinUCBPolicy(numArms: Int, numFeatures: Int, alpha: Double)
   extends ContextualBanditPolicy(numArms, numFeatures) {
   override protected def estimateRewards(features: DenseVector[Double],
                                          armFeaturesAcc: DenseMatrix[Double],
