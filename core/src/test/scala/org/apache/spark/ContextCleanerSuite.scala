@@ -394,6 +394,10 @@ class CleanerTester(
       toBeCheckpointIds.synchronized { toBeCheckpointIds -= rddId }
       logInfo("checkpoint  " + rddId + " cleaned")
     }
+
+    def banditCleaned(banditId: Long): Unit = {
+      logInfo("Cleaned banditId " + banditId + " cleaned")
+    }
   }
 
   val MAX_VALIDATION_ATTEMPTS = 10
