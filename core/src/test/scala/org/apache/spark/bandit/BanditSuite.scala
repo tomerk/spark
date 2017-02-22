@@ -20,6 +20,7 @@ package org.apache.spark.bandit
 import breeze.linalg.{DenseMatrix, DenseVector, inv}
 import breeze.stats.distributions.{MultivariateGaussian, Rand}
 import org.apache.spark._
+import org.apache.spark.bandit.policies.{GaussianThompsonSamplingPolicy, LinUCBPolicy}
 
 class BanditSuite extends SparkFunSuite with LocalSparkContext {
 

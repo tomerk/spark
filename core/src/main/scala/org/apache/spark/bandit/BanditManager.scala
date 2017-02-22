@@ -20,6 +20,7 @@ package org.apache.spark.bandit
 import java.util.concurrent.atomic.AtomicLong
 
 import breeze.linalg.DenseVector
+import org.apache.spark.bandit.policies.{BanditPolicy, ContextualBanditPolicy}
 import org.apache.spark.internal.Logging
 import org.apache.spark.{SecurityManager, SparkConf}
 
