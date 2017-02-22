@@ -49,7 +49,7 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     val endTime = System.nanoTime()
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
-    banditManager.provideFeedback(id, policy, arm, 1, startTime - endTime)
+    banditManager.provideFeedback(id, arm, 1, startTime - endTime)
     result
   }
 
@@ -67,7 +67,7 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     val endTime = System.nanoTime()
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
-    banditManager.provideFeedback(id, policy, arm, in.length, startTime - endTime)
+    banditManager.provideFeedback(id, arm, in.length, startTime - endTime)
     result
   }
 

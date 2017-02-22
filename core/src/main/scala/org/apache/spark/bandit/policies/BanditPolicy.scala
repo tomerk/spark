@@ -48,7 +48,7 @@ abstract class BanditPolicy(val numArms: Int) extends Serializable {
                                 totalPlays: Array[Long],
                                 totalRewards: Array[Double]): Seq[Double]
 
-  def provideFeedback(arm: Int, plays: Int, reward: Double): Unit = stateLock.synchronized {
+  def provideFeedback(arm: Int, plays: Long, reward: Double): Unit = stateLock.synchronized {
     totalPlays(arm) += plays
     totalRewards(arm) += reward
   }

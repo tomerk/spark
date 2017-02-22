@@ -62,10 +62,16 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
     val xxT = features * features.t
     val rx = reward * features
 
+    provideFeedback(arm, xxT, rx)
+  }
+
+  def provideFeedback(arm: Int,
+                      features: DenseMatrix[Double],
+                      reward: DenseVector[Double]): Unit = {
     stateLock.synchronized {
       // Not an in-place update for the matrices, leaves them valid when used elsewhere!
-      featuresAccumulator(arm) = featuresAccumulator(arm) + xxT
-      rewardAccumulator(arm) = rewardAccumulator(arm) + rx
+      featuresAccumulator(arm) = featuresAccumulator(arm) + features
+      rewardAccumulator(arm) = rewardAccumulator(arm) + reward
     }
   }
 
