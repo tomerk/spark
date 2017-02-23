@@ -87,8 +87,10 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
     //x.map(y => invOne(y)).collect()
     //x.map(y => invTwo(y)).collect()
 
+    val feat: Int => DenseVector[Double] = _ => DenseVector.fill[Double](1)(1.0)
     (0 until 1).foreach { _ =>
-      val bandit = sc.bandit(Seq(invOne, invTwo), UCB1PolicyParams())
+      val bandit = sc.contextualBandit(Seq(invOne, invTwo), feat,
+        LinUCBPolicyParams(1))
 
       //x.map(y => invOne(y)).collect()
       x.map(y => bandit.apply(y)).collect()

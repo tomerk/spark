@@ -24,6 +24,8 @@ import breeze.stats.distributions.Gaussian
  * from:
  * https://bandits.wikischolars.columbia.edu/file/view/Lecture+4.pdf
  *
+ * Fixme: This prior is ridiculous. We should be observing the running
+ * variance of the rewards then using that.
  * @param numArms
  */
 private[spark] class GaussianThompsonSamplingPolicy(numArms: Int) extends BanditPolicy(numArms) {

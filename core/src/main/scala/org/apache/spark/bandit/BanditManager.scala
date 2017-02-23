@@ -88,11 +88,8 @@ private[spark] class BanditManager(
               idSetClone
             }
 
-            logInfo(s"Have this many updates: ${ids.length}")
-
             // Construct the updates, setting locks as necessary
             val updates: Seq[BanditUpdate] = ids.map { id =>
-              logInfo("Checking for updates to ids: ")
               if (policies.containsKey(id)) {
                 val (policy, (localPlays, localRewards)) = policies.get(id)
                 policy.stateLock.synchronized {
@@ -200,11 +197,17 @@ private[spark] class BanditManager(
       localFeatures(arm) = localFeatures(arm) + xxT
       localRewards(arm) = localRewards(arm) + rx
     }
+
+    updatedBandits.synchronized {
+      updatedBandits.add(id)
+    }
   }
 
   def mergeDistributedContextualFeedback(id: Long,
                                          features: Array[DenseMatrix[Double]],
                                          rewards: Array[DenseVector[Double]]): Unit = {
+    logInfo(s"feedback: $id, ${features.toSeq} ${rewards.toSeq}")
+
     val (policy, (localFeatures, localRewards)) = contextualPolicies.get(id)
 
     val eye = DenseMatrix.eye[Double](policy.numFeatures)

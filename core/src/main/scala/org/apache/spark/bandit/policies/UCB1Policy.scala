@@ -21,6 +21,14 @@ package org.apache.spark.bandit.policies
  * UCB1, algorithm from:
  * https://homes.di.unimi.it/~cesabian/Pubblicazioni/ml-02.pdf
  *
+ * Just like with GaussianThompsonSampling this has issues.
+ * UCB1 was designed in a context where the reward is in [0,1]
+ * and for us it clearly is not.
+ *
+ * Either multiply that factor by a hyperparameter times the range
+ * in rewards of the individual arm's expectations, or use UCB tuned
+ * (again slightly modified because 1/4 will be poorly scaled)
+ *
  * @param numArms
  */
 private[spark] class UCB1Policy(numArms: Int) extends BanditPolicy(numArms) {
