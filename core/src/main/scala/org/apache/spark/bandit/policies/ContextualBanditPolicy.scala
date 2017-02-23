@@ -78,8 +78,14 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
   def setState(features: Array[DenseMatrix[Double]],
                rewards: Array[DenseVector[Double]]): Unit = {
     for (arm <- 0 until numArms) stateLock.synchronized {
-      featuresAccumulator(arm) = features(arm)
-      rewardAccumulator(arm) = rewards(arm)
+      setState(arm, features(arm), rewards(arm))
+    }
+  }
+
+  def setState(arm: Int, features: DenseMatrix[Double], rewards: DenseVector[Double]): Unit = {
+    stateLock.synchronized {
+      featuresAccumulator(arm) = features
+      rewardAccumulator(arm) = rewards
     }
   }
 

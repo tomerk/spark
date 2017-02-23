@@ -19,12 +19,14 @@ package org.apache.spark.bandit.policies
 
 import java.io.ObjectOutputStream
 
+import org.apache.spark.internal.Logging
+
 sealed trait BanditPolicyParams
 case class EpsilonGreedyPolicyParams(epsilon: Double = 0.2) extends BanditPolicyParams
 case class UCB1PolicyParams() extends BanditPolicyParams
 case class GaussianThompsonSamplingPolicyParams() extends BanditPolicyParams
 
-abstract class BanditPolicy(val numArms: Int) extends Serializable {
+abstract class BanditPolicy(val numArms: Int) extends Logging with Serializable {
   @transient lazy private[spark] val stateLock = this
   private val totalPlays: Array[Long] = Array.fill(numArms)(0L)
   private val totalRewards: Array[Double] = Array.fill(numArms)(0.0)
@@ -33,6 +35,7 @@ abstract class BanditPolicy(val numArms: Int) extends Serializable {
     val rewards = estimateRewards(plays)
     val maxReward = rewards.max
     val bestArms = rewards.zipWithIndex.filter(_._1 == maxReward)
+
     bestArms(scala.util.Random.nextInt(bestArms.length))._2
   }
 
@@ -55,9 +58,14 @@ abstract class BanditPolicy(val numArms: Int) extends Serializable {
 
   def setState(plays: Array[Long], rewards: Array[Double]): Unit = stateLock.synchronized {
     for (i <- 0 until numArms) {
-      totalPlays(i) = plays(i)
-      totalRewards(i) = rewards(i)
+      setState(i, plays(i), rewards(i))
     }
+  }
+
+  def setState(arm: Int, plays: Long, rewards: Double): Unit =
+    stateLock.synchronized {
+      totalPlays(arm) = plays
+      totalRewards(arm) = rewards
   }
 
   /**

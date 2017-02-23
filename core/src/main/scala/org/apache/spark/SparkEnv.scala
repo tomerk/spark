@@ -25,7 +25,7 @@ import scala.util.Properties
 import com.google.common.collect.MapMaker
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.api.python.PythonWorkerFactory
-import org.apache.spark.bandit.BanditManager
+import org.apache.spark.bandit.{BanditManager, BanditManagerMaster, BanditManagerMasterEndpoint}
 import org.apache.spark.broadcast.BroadcastManager
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
@@ -301,7 +301,14 @@ object SparkEnv extends Logging {
     }
 
     val broadcastManager = new BroadcastManager(isDriver, conf, securityManager)
-    val banditManager = new BanditManager(isDriver, conf, securityManager)
+    val banditManager = new BanditManager(
+      isDriver,
+      executorId,
+      conf,
+      registerOrLookupEndpoint(
+        BanditManagerMaster.DRIVER_ENDPOINT_NAME,
+        new BanditManagerMasterEndpoint(rpcEnv)),
+      securityManager)
 
     val mapOutputTracker = if (isDriver) {
       new MapOutputTrackerMaster(conf, broadcastManager, isLocal)

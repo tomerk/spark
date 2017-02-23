@@ -20,7 +20,7 @@ package org.apache.spark.bandit
 import breeze.linalg.{DenseMatrix, DenseVector, inv}
 import breeze.stats.distributions.{MultivariateGaussian, Rand}
 import org.apache.spark._
-import org.apache.spark.bandit.policies.{GaussianThompsonSamplingPolicy, LinUCBPolicy}
+import org.apache.spark.bandit.policies._
 
 class BanditSuite extends SparkFunSuite with LocalSparkContext {
 
@@ -57,6 +57,45 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
     val results = sc.parallelize(1 to numSlaves).map(x => (x, broadcast.value.sum))
     assert(results.collect().toSet === (1 to numSlaves).map(x => (x, 10)).toSet)
   }
+
+  test("Trying bandits?") {
+    val numSlaves = 2
+    val numCoresPerSlave = 2
+    val memoryPerSlave = 2048
+    val conf = new SparkConf
+    //conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+    conf.set("spark.driver.extraClassPath", sys.props("java.class.path"))
+        .set("spark.executor.extraClassPath", sys.props("java.class.path"))
+
+    sc = new SparkContext(s"local-cluster[$numSlaves, $numCoresPerSlave, $memoryPerSlave]", "test", conf)
+
+    val invOne: Int => Int = numFeatures => {
+      val mat = DenseMatrix.rand[Double](100, 100)
+      mat * mat * mat * mat
+      17
+    }
+
+    val invTwo: Int => Int = numFeatures => {
+      val mat = DenseMatrix.rand[Double](100, 100)
+      mat * mat * mat * mat
+      17
+    }
+
+    val list = Seq.fill(10000)(50)
+    val x = sc.parallelize(list, numSlices = 50)
+
+    //x.map(y => invOne(y)).collect()
+    //x.map(y => invTwo(y)).collect()
+
+    (0 until 1).foreach { _ =>
+      val bandit = sc.bandit(Seq(invOne, invTwo), UCB1PolicyParams())
+
+      //x.map(y => invOne(y)).collect()
+      x.map(y => bandit.apply(y)).collect()
+    }
+    //assert(results.collect().toSet === (1 to numSlaves).map(x => (x, 10)).toSet)
+  }
+
 
   test("Test Contextual Bandit Timings") {
     val numFeatures = 3
