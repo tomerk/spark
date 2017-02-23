@@ -71,8 +71,12 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     result
   }
 
-  def saveTunedSettings(file: String): Unit = ???
-  def loadTunedSettings(file: String): Unit = ???
+  def saveTunedSettings(file: String): Unit = {
+    throw new NotImplementedError()
+  }
+  def loadTunedSettings(file: String): Unit = {
+    throw new NotImplementedError()
+  }
 }
 
 
