@@ -118,7 +118,7 @@ This file is divided into 3 sections:
 
   <check customId="nonascii" level="error" class="org.scalastyle.scalariform.NonASCIICharacterChecker" enabled="true"></check>
 
-  <check level="error" class="org.scalastyle.scalariform.SpaceAfterCommentStartChecker" enabled="true"></check>
+  <check level="error" class="org.scalastyle.scalariform.SpaceAfterCommentStartChecker" enabled="false"></check>
 
   <check level="error" class="org.scalastyle.scalariform.EnsureSingleSpaceBeforeTokenChecker" enabled="true">
    <parameters>
@@ -233,7 +233,7 @@ This file is divided into 3 sections:
     is slower.  </customMessage>
   </check>
 
-  <check level="error" class="org.scalastyle.scalariform.ImportOrderChecker" enabled="true">
+  <check level="error" class="org.scalastyle.scalariform.ImportOrderChecker" enabled="false">
     <parameters>
       <parameter name="groups">java,scala,3rdParty,spark</parameter>
       <parameter name="group.java">javax?\..*</parameter>

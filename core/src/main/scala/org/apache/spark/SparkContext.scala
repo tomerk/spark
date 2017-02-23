@@ -1500,14 +1500,15 @@ class SparkContext(config: SparkConf) extends Logging {
    * @param arms The arms to choose between
    * @param policy The learning policy to use
    */
-  def bandit[A: ClassTag, B: ClassTag](arms: Seq[A => B], policy: BanditPolicyParams): Bandit[A, B] = {
+  def bandit[A: ClassTag, B: ClassTag](arms: Seq[A => B],
+                                       policy: BanditPolicyParams): Bandit[A, B] = {
     assertNotStopped()
     val cleanedArms = arms.map(arm => clean(arm))
-    val b = env.banditManager.newBandit[A, B](cleanedArms, policy, isLocal)
+    val bandit = env.banditManager.newBandit[A, B](cleanedArms, policy, isLocal)
     val callSite = getCallSite
-    logInfo("Created bandit " + b.id + " from " + callSite.shortForm)
-    cleaner.foreach(_.registerBanditForCleanup(b))
-    b
+    logInfo("Created bandit " + bandit.id + " from " + callSite.shortForm)
+    cleaner.foreach(_.registerBanditForCleanup(bandit))
+    bandit
   }
 
   /**
@@ -1523,11 +1524,16 @@ class SparkContext(config: SparkConf) extends Logging {
     assertNotStopped()
     val cleanedArms = arms.map(arm => clean(arm))
     val cleanedFeatures = clean(features)
-    val b = env.banditManager.newContextualBandit[A, B](cleanedArms, cleanedFeatures, policy, isLocal)
+    val bandit = env.banditManager.newContextualBandit[A, B](
+      cleanedArms,
+      cleanedFeatures,
+      policy,
+      isLocal
+    )
     val callSite = getCallSite
-    logInfo("Created bandit " + b.id + " from " + callSite.shortForm)
-    cleaner.foreach(_.registerContextualBanditForCleanup(b))
-    b
+    logInfo("Created bandit " + bandit.id + " from " + callSite.shortForm)
+    cleaner.foreach(_.registerContextualBanditForCleanup(bandit))
+    bandit
   }
 
   /**
