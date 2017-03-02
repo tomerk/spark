@@ -109,7 +109,7 @@ class InnerJoinSuite extends SparkPlanTest with SharedSQLContext {
         leftPlan: SparkPlan,
         rightPlan: SparkPlan,
         side: BuildSide) = {
-      val shuffledHashJoin = joins.ShuffledHashOrSortMergeJoinExec(
+      val shuffledHashJoin = joins.ShuffledHashJoinExec(
         leftKeys, rightKeys, Inner,
         side, None, leftPlan, rightPlan)
       val filteredJoin =
