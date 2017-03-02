@@ -45,10 +45,10 @@ case class ShuffledHashOrSortMergeJoinExec(
   extends BinaryExecNode with HashJoin {
 
   //val sc = left.sqlContext.sparkContext
-  def joinByHash(in: (Seq[InternalRow], Seq[InternalRow], SQLMetric,
+  def joinByHash(in: (Iterator[InternalRow], Iterator[InternalRow], SQLMetric,
     Seq[Attribute], Seq[Attribute])): Iterator[InternalRow] = {
-    val hashed = buildHashedRelation(in._2.iterator)
-    join(in._1.iterator, hashed, in._3)
+    val hashed = buildHashedRelation(in._2)
+    join(in._1, hashed, in._3)
   }
 
   def joinBySort(in: (Iterator[InternalRow], Iterator[InternalRow], SQLMetric,
@@ -62,19 +62,40 @@ case class ShuffledHashOrSortMergeJoinExec(
       }
     }
 
+    //logError(s"read: ${TaskContext.get().taskMetrics().shuffleReadMetrics.recordsRead}")
+
     // An ordering that can be used to compare keys from both sides.
     val keyOrdering = newNaturalAscendingOrdering(leftKeys.map(_.dataType))
     val resultProj: InternalRow => InternalRow = UnsafeProjection.create(output, output)
 
-    val leftSorter = new ExternalSorter[InternalRow, Null, InternalRow](
-      TaskContext.get(), ordering = Some(keyOrdering))
-    leftSorter.insertAll(in._1.map(r => (r.copy(), null)))
-    val leftIter = leftSorter.iterator.map(_._1)
+    /*import scala.collection.JavaConverters._
+    val lList = new util.ArrayList[InternalRow]()
+    in._1.foreach {
+      row => lList.add(row.copy())
+    }
 
-    val rightSorter = new ExternalSorter[InternalRow, Null, InternalRow](
+    val rList = new util.ArrayList[InternalRow]()
+    in._2.foreach {
+      row => rList.add(row.copy())
+    }*/
+    val leftList = in._1.map(_.copy()).toArray
+    val rightList = in._2.map(_.copy()).toArray
+    //val start = System.currentTimeMillis()
+
+    logError(s"${leftList.size}, ${rightList.size} Yay")
+    //logError(s"read: ${TaskContext.get().taskMetrics().shuffleReadMetrics.recordsRead}")
+    java.util.Arrays.sort(leftList, keyOrdering)
+    java.util.Arrays.sort(rightList, keyOrdering)
+
+    /*val leftSorter = new ExternalSorter[InternalRow, Null, InternalRow](
       TaskContext.get(), ordering = Some(keyOrdering))
-    rightSorter.insertAll(in._2.map(r => (r.copy(), null)))
-    val rightIter = rightSorter.iterator.map(_._1)
+    leftSorter.insertAll(leftList.iterator.map(r => (r, null)))*/
+    val leftIter = leftList.iterator//leftList.sorted(keyOrdering).iterator//leftSorter.iterator.map(_._1)
+
+    /*val rightSorter = new ExternalSorter[InternalRow, Null, InternalRow](
+      TaskContext.get(), ordering = Some(keyOrdering))
+    rightSorter.insertAll(rightList.iterator.map(r => (r, null)))*/
+    val rightIter = rightList.iterator//rightList.sorted(keyOrdering).iterator//rightSorter.iterator.map(_._1)
     val numOutputRows = in._3
 
     joinType match {
@@ -308,9 +329,10 @@ case class ShuffledHashOrSortMergeJoinExec(
   protected override def doExecute(): RDD[InternalRow] = {
     val numOutputRows = longMetric("numOutputRows")
     streamedPlan.execute().zipPartitions(buildPlan.execute()) { (streamIter, buildIter) =>
-      val streamIterSeq = streamIter
-      val buildIterSeq = buildIter
-      joinBySort((streamIterSeq, buildIterSeq, numOutputRows, left.output, right.output))
+      // These .copy()'s are needed because the rows are streamed unsaferows.
+      //val streamIterSeq = streamIter.map(_.copy()).toStream
+      //val buildIterSeq = buildIter.map(_.copy()).toStream
+      joinBySort((streamIter, buildIter, numOutputRows, left.output, right.output))
     }
   }
 
