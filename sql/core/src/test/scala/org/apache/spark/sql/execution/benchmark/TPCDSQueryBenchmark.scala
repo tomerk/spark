@@ -101,7 +101,7 @@ object TPCDSQueryBenchmark {
   def main(args: Array[String]): Unit = {
 
     // List of all TPC-DS queries
-    val tpcdsQueries = Seq("q72")// Seq("q49", "q72", "q75", "q78", "q80", "q93")
+    val tpcdsQueries = Seq("q49", "q72", "q75", "q78", "q80", "q93") //q72 is slow on hash
     // "q77" gives error
     // "q5" and "q40" are only broadcast joins w/ the current scale factor of 5 & 16 partitions
     // "q51" and "q97" don't support hash joins because not a hashable relation
