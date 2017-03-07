@@ -31,14 +31,16 @@ package org.apache.spark.bandit.policies
  *
  * @param numArms
  */
-private[spark] class UCB1Policy(numArms: Int) extends BanditPolicy(numArms) {
+private[spark] class UCB1Policy(numArms: Int, boundsConst: Double) extends BanditPolicy(numArms) {
   override protected def estimateRewards(playsToMake: Int,
                                          totalPlays: Array[Long],
-                                         totalRewards: Array[Double]): Seq[Double] = {
+                                         totalRewards: Array[Double],
+                                         totalRewardsSquared: Array[Double]): Seq[Double] = {
     val n = totalPlays.sum
     (0 until numArms).map { arm =>
       if (totalPlays(arm) > 0) {
-        (totalRewards(arm) / totalPlays(arm)) + math.sqrt(2.0*math.log(n)/totalPlays(arm))
+        (totalRewards(arm) / totalPlays(arm)) +
+          boundsConst * math.sqrt(2.0*math.log(n)/totalPlays(arm))
       } else {
         Double.PositiveInfinity
       }

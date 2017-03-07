@@ -49,7 +49,9 @@ private[spark] class BanditManager(
   extends Logging {
 
   private var initialized = false
-  private val policies = new ConcurrentHashMap[Long, (BanditPolicy, (Array[Long], Array[Double]))]()
+  private val policies = {
+    new ConcurrentHashMap[Long, (BanditPolicy, (Array[Long], Array[Double], Array[Double]))]()
+  }
   private val contextualPolicies = new ConcurrentHashMap[Long,
       (ContextualBanditPolicy, (Array[DenseMatrix[Double]], Array[DenseVector[Double]]))]()
   private val updatedBandits = mutable.Set[Long]()
@@ -91,9 +93,13 @@ private[spark] class BanditManager(
             // Construct the updates, setting locks as necessary
             val updates: Seq[BanditUpdate] = ids.map { id =>
               if (policies.containsKey(id)) {
-                val (policy, (localPlays, localRewards)) = policies.get(id)
+                val (policy, (localPlays, localRewards, localRewardsSecMoment)) = policies.get(id)
                 policy.stateLock.synchronized {
-                  MABBanditUpdate(id, localPlays.clone(), localRewards.clone())
+                  MABBanditUpdate(
+                    id,
+                    localPlays.clone(),
+                    localRewards.clone(),
+                    localRewardsSecMoment.clone())
                 }
               } else {
                 val (policy, (localFeatures, localRewards)) = contextualPolicies.get(id)
@@ -109,8 +115,8 @@ private[spark] class BanditManager(
                   _.updates.foreach {
                     case ContextualBanditUpdate(id, features, rewards) =>
                       mergeDistributedContextualFeedback(id, features, rewards)
-                    case MABBanditUpdate(id, plays, rewards) =>
-                      mergeDistributedFeedback(id, plays, rewards)
+                    case MABBanditUpdate(id, plays, rewards, rewardsSquared) =>
+                      mergeDistributedFeedback(id, plays, rewards, rewardsSquared)
                   }
                 }
               }(forwardMessageExecutionContext)
@@ -134,7 +140,9 @@ private[spark] class BanditManager(
 
   def registerOrLoadPolicy(id: Long, policy: BanditPolicy): BanditPolicy = {
     policies.putIfAbsent(id, (policy,
-      (Array.fill(policy.numArms)(0), Array.fill(policy.numArms)(0))))
+      (Array.fill(policy.numArms)(0),
+        Array.fill(policy.numArms)(0),
+        Array.fill(policy.numArms)(0))))
     policies.get(id)._1
   }
 
@@ -152,12 +160,17 @@ private[spark] class BanditManager(
     contextualPolicies.get(id)._1
   }
 
-  def provideFeedback(id: Long, arm: Int, plays: Long, reward: Double): Unit = {
-    val (policy, (localPlays, localRewards)) = policies.get(id)
+  def provideFeedback(id: Long,
+                      arm: Int,
+                      plays: Long,
+                      reward: Double,
+                      rewardsSquared: Double): Unit = {
+    val (policy, (localPlays, localRewards, localRewardsSquared)) = policies.get(id)
     policy.stateLock.synchronized {
-      policy.provideFeedback(arm, plays, reward)
+      policy.provideFeedback(arm, plays, reward, rewardsSquared)
       localPlays(arm) += plays
       localRewards(arm) += reward
+      localRewardsSquared(arm) += rewardsSquared
     }
 
     updatedBandits.synchronized {
@@ -167,15 +180,17 @@ private[spark] class BanditManager(
 
   def mergeDistributedFeedback(id: Long,
                                plays: Array[Long],
-                               rewards: Array[Double]): Unit = {
-    val (policy, (localPlays, localRewards)) = policies.get(id)
+                               rewards: Array[Double],
+                               rewardsSquared: Array[Double]): Unit = {
+    val (policy, (localPlays, localRewards, localRewardsSquared)) = policies.get(id)
 
     policy.stateLock.synchronized {
       for (arm <- 0 until policy.numArms) {
         val newPlays = localPlays(arm) + plays(arm)
         val newRewards = localRewards(arm) + rewards(arm)
+        val newRewardsSquared = localRewardsSquared(arm) + rewardsSquared(arm)
 
-        policy.setState(arm, newPlays, newRewards)
+        policy.setState(arm, newPlays, newRewards, newRewardsSquared)
       }
     }
 
@@ -236,10 +251,10 @@ private[spark] class BanditManager(
     val policy = policyParams match {
       case EpsilonGreedyPolicyParams(epsilon) =>
         new EpsilonGreedyPolicy(numArms = arms.length, epsilon)
-      case GaussianThompsonSamplingPolicyParams() =>
-        new GaussianThompsonSamplingPolicy(numArms = arms.length)
-      case UCB1PolicyParams() =>
-        new UCB1Policy(numArms = arms.length)
+      case GaussianThompsonSamplingPolicyParams(multiplier) =>
+        new GaussianThompsonSamplingPolicy(numArms = arms.length, varianceMultiplier = multiplier)
+      case UCB1PolicyParams(range) =>
+        new UCB1Policy(numArms = arms.length, boundsConst = range)
     }
 
     val id = nextBanditId.getAndIncrement()

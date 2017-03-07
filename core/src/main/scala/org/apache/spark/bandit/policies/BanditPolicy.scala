@@ -23,13 +23,16 @@ import org.apache.spark.internal.Logging
 
 sealed trait BanditPolicyParams
 case class EpsilonGreedyPolicyParams(epsilon: Double = 0.2) extends BanditPolicyParams
-case class UCB1PolicyParams() extends BanditPolicyParams
-case class GaussianThompsonSamplingPolicyParams() extends BanditPolicyParams
+case class UCB1PolicyParams(rewardRange: Double = 1.0) extends BanditPolicyParams
+case class GaussianThompsonSamplingPolicyParams(
+                                                 varMultiplier: Double = 1.0
+                                               ) extends BanditPolicyParams
 
 abstract class BanditPolicy(val numArms: Int) extends Logging with Serializable {
   @transient lazy private[spark] val stateLock = this
   private val totalPlays: Array[Long] = Array.fill(numArms)(0L)
   private val totalRewards: Array[Double] = Array.fill(numArms)(0.0)
+  private val totalRewardsSecondMoment: Array[Double] = Array.fill(numArms)(0.0)
 
   def chooseArm(plays: Int): Int = {
     val rewards = estimateRewards(plays)
@@ -40,32 +43,40 @@ abstract class BanditPolicy(val numArms: Int) extends Logging with Serializable 
   }
 
   private def estimateRewards(plays: Int): Seq[Double] = {
-    val (playsCopy, rewardsCopy) = stateLock.synchronized {
-      (totalPlays.clone(), totalRewards.clone())
+    val (playsCopy, rewardsCopy, rewardsSecondMomentCopy) = stateLock.synchronized {
+      (totalPlays.clone(), totalRewards.clone(), totalRewardsSecondMoment.clone())
     }
 
-    estimateRewards(plays, playsCopy, rewardsCopy)
+    estimateRewards(plays, playsCopy, rewardsCopy, rewardsSecondMomentCopy)
   }
 
   protected def estimateRewards(playsToMake: Int,
                                 totalPlays: Array[Long],
-                                totalRewards: Array[Double]): Seq[Double]
+                                totalRewards: Array[Double],
+                                totalRewardsSquared: Array[Double]): Seq[Double]
 
-  def provideFeedback(arm: Int, plays: Long, reward: Double): Unit = stateLock.synchronized {
+  def provideFeedback(arm: Int,
+                      plays: Long,
+                      reward: Double,
+                      rewardsSquared: Double): Unit = stateLock.synchronized {
     totalPlays(arm) += plays
     totalRewards(arm) += reward
+    totalRewardsSecondMoment(arm) += rewardsSquared
   }
 
-  def setState(plays: Array[Long], rewards: Array[Double]): Unit = stateLock.synchronized {
+  def setState(plays: Array[Long],
+               rewards: Array[Double],
+               rewardsSecondMoment: Array[Double]): Unit = stateLock.synchronized {
     for (i <- 0 until numArms) {
-      setState(i, plays(i), rewards(i))
+      setState(i, plays(i), rewards(i), rewardsSecondMoment(i))
     }
   }
 
-  def setState(arm: Int, plays: Long, rewards: Double): Unit =
+  def setState(arm: Int, plays: Long, rewards: Double, rewardsSecondMoment: Double): Unit =
     stateLock.synchronized {
       totalPlays(arm) = plays
       totalRewards(arm) = rewards
+      totalRewardsSecondMoment(arm) = rewardsSecondMoment
   }
 
   /**

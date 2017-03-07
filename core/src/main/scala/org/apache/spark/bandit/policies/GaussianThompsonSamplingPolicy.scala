@@ -28,15 +28,26 @@ import breeze.stats.distributions.Gaussian
  * variance of the rewards then using that.
  * @param numArms
  */
-private[spark] class GaussianThompsonSamplingPolicy(numArms: Int) extends BanditPolicy(numArms) {
+private[spark] class GaussianThompsonSamplingPolicy(
+                                                     numArms: Int,
+                                                     varianceMultiplier: Double
+                                                   ) extends BanditPolicy(numArms) {
   override protected def estimateRewards(playsToMake: Int,
                                          totalPlays: Array[Long],
-                                         totalRewards: Array[Double]): Seq[Double] = {
+                                         totalRewards: Array[Double],
+                                         totalRewardsSquared: Array[Double]): Seq[Double] = {
     (0 until numArms).map { arm =>
-      if (totalPlays(arm) > 0) {
+      val numPlays = totalPlays(arm)
+      if (numPlays > 0) {
+        // Variance Computed using naive algorithm from:
+        // https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
+        val varNumerator = totalRewardsSquared(arm) -
+          (totalRewards(arm) * totalRewards(arm)) / totalPlays(arm)
+        val runningVariance = varNumerator / (numPlays - 1)
+
         new Gaussian(
           totalRewards(arm) / (totalPlays(arm) + 1.0),
-          1.0 / totalPlays(arm)
+          runningVariance / totalPlays(arm)
         ).draw()
       } else {
         Double.PositiveInfinity

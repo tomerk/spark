@@ -49,9 +49,24 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     val endTime = System.nanoTime()
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
-    banditManager.provideFeedback(id, arm, 1, startTime - endTime)
+    val reward: Double = startTime - endTime
+    banditManager.provideFeedback(id, arm, 1, reward, reward * reward)
     result
   }
+
+  def applyAndOutputReward(in: A): (B, Action) = {
+    val arm = policy.chooseArm(1)
+    val startTime = System.nanoTime()
+    val result = arms(arm).apply(in)
+    val endTime = System.nanoTime()
+
+    // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
+    val reward: Double = startTime - endTime
+
+    banditManager.provideFeedback(id, arm, 1, reward, reward * reward)
+    (result, Action(arm, startTime - endTime))
+  }
+
 
   /**
    * A vectorized bandit strategy. Given a sequence of input, choose a single arm
@@ -67,7 +82,9 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     val endTime = System.nanoTime()
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
-    banditManager.provideFeedback(id, arm, in.length, startTime - endTime)
+    val reward: Double = startTime - endTime
+
+    banditManager.provideFeedback(id, arm, in.length, reward, reward * reward / in.length)
     result
   }
 

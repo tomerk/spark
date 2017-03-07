@@ -24,40 +24,6 @@ import org.apache.spark.bandit.policies._
 
 class BanditSuite extends SparkFunSuite with LocalSparkContext {
 
-  test("Using TorrentBroadcast locally") {
-    sc = new SparkContext("local", "test")
-    val list = List[Int](1, 2, 3, 4)
-    val broadcast = sc.broadcast(list)
-    val results = sc.parallelize(1 to 2).map(x => (x, broadcast.value.sum))
-    assert(results.collect().toSet === Set((1, 10), (2, 10)))
-  }
-
-  test("Accessing TorrentBroadcast variables from multiple threads") {
-    sc = new SparkContext("local[10]", "test")
-    val list = List[Int](1, 2, 3, 4)
-    val broadcast = sc.broadcast(list)
-    val results = sc.parallelize(1 to 10).map(x => (x, broadcast.value.sum))
-    assert(results.collect().toSet === (1 to 10).map(x => (x, 10)).toSet)
-  }
-
-  test("Accessing TorrentBroadcast Bandit variables in a local cluster") {
-    val numSlaves = 4
-    val conf = new SparkConf
-    conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-    conf.set("spark.broadcast.compress", "true")
-      .set("spark.driver.extraClassPath", sys.props("java.class.path"))
-      .set("spark.executor.extraClassPath", sys.props("java.class.path"))
-    logInfo("Waiting fer more :O")
-    logError("Waiting fer more :O")
-    sc = new SparkContext("local-cluster[%d, 1, 1024]".format(numSlaves), "test", conf)
-    logInfo("Waiting fer more :O")
-    logError("Waiting fer more :O")
-    val list = List[Int](1, 2, 3, 4)
-    val broadcast = sc.broadcast(list)
-    val results = sc.parallelize(1 to numSlaves).map(x => (x, broadcast.value.sum))
-    assert(results.collect().toSet === (1 to numSlaves).map(x => (x, 10)).toSet)
-  }
-
   test("Trying bandits?") {
     val numSlaves = 2
     val numCoresPerSlave = 2
@@ -125,7 +91,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
 
   test("Test Bandit Timings") {
     val arms = 10
-    val policy = new GaussianThompsonSamplingPolicy(numArms = arms)
+    val policy = new GaussianThompsonSamplingPolicy(numArms = arms, varianceMultiplier = 1.0)
 
     val bestArm = 3
 
@@ -138,7 +104,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
 
       logInfo(s"$i: $arm")
       val reward = rewardDist.draw() - (if (arm == bestArm) 10 else 10.5)
-      policy.provideFeedback(arm, 1, reward)
+      policy.provideFeedback(arm, 1, reward, reward*reward)
       i += 1
     }
     val end = System.currentTimeMillis()

@@ -23,6 +23,8 @@ import org.apache.spark.SparkEnv
 import org.apache.spark.bandit.policies.ContextualBanditPolicy
 import org.apache.spark.internal.Logging
 
+case class Action(arm: Int, reward: Double)
+
 /**
  * The contextual bandit class is used for dynamically tuned methods appearing in spark tasks.
  */
@@ -55,6 +57,31 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     banditManager.provideContextualFeedback(id, arm, features, startTime - endTime)
     result
   }
+
+  def applyAndOutputReward(in: A): (B, Action) = {
+    val features = featureExtractor(in)
+    val arm = policy.chooseArm(features)
+    val startTime = System.nanoTime()
+    val result = arms(arm).apply(in)
+    val endTime = System.nanoTime()
+
+    // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
+    banditManager.provideContextualFeedback(id, arm, features, startTime - endTime)
+    (result, Action(arm, startTime - endTime))
+  }
+
+  def applyAndOutputRewardAndModelUsed(in: A): (B, Action) = {
+    val features = featureExtractor(in)
+    val arm = policy.chooseArm(features)
+    val startTime = System.nanoTime()
+    val result = arms(arm).apply(in)
+    val endTime = System.nanoTime()
+
+    // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
+    banditManager.provideContextualFeedback(id, arm, features, startTime - endTime)
+    (result, Action(arm, startTime - endTime))
+  }
+
 
   /**
    * A vectorized bandit strategy. Given a sequence of input, choose a single arm
