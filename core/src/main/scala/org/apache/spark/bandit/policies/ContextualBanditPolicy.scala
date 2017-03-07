@@ -54,6 +54,16 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
     }
   }
 
+  private def estimateRewardsAndOutputModel(features: DenseVector[Double]): (Seq[Double]) = {
+    (0 until numArms).map { arm =>
+      val (armFeaturesAcc, armRewardsAcc) = stateLock.synchronized {
+        (featuresAccumulator(arm), rewardAccumulator(arm))
+      }
+      estimateRewards(features, armFeaturesAcc, armRewardsAcc)
+    }
+  }
+
+
   protected def estimateRewards(features: DenseVector[Double],
                                 armFeaturesAcc: DenseMatrix[Double],
                                 armRewardsAcc: DenseVector[Double]): Double

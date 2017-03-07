@@ -28,7 +28,10 @@ case class ContextualBanditUpdate(banditId: Long,
                                   features: Array[DenseMatrix[Double]],
                                   rewards: Array[DenseVector[Double]]
                                  ) extends BanditUpdate
-case class MABBanditUpdate(banditId: Long, plays: Array[Long], rewards: Array[Double])
+case class MABBanditUpdate(banditId: Long,
+                           plays: Array[Long],
+                           rewards: Array[Double],
+                           rewardsSecondMoment: Array[Double])
   extends BanditUpdate
 
 trait BanditManagerMessages
@@ -39,11 +42,11 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv)
   extends ThreadSafeRpcEndpoint with Logging {
 
   private val executorStates = mutable.Map[String,
-    mutable.Map[Long, (Array[Long], Array[Double])]]()
+    mutable.Map[Long, (Array[Long], Array[Double], Array[Double])]]()
   private val executorContextualStates = mutable.Map[String,
     mutable.Map[Long, (Array[DenseMatrix[Double]], Array[DenseVector[Double]])]]()
 
-  private val states = mutable.Map[Long, (Array[Long], Array[Double])]()
+  private val states = mutable.Map[Long, (Array[Long], Array[Double], Array[Double])]()
   private val contextualStates = mutable.Map[Long,
     (Array[DenseMatrix[Double]], Array[DenseVector[Double]])]()
 
@@ -51,28 +54,33 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv)
   override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
     case SendLocalUpdates(executorId, localUpdates) =>
       val responses = localUpdates.map {
-        case MABBanditUpdate(id, plays, rewards) =>
+        case MABBanditUpdate(id, plays, rewards, rewardsSquared) =>
           val arms = plays.length
           val executorState = executorStates.getOrElseUpdate(executorId, mutable.Map())
           val oldLocalState = executorState.getOrElse(id,
-            (Array.fill(arms)(0L), Array.fill(arms)(0.0)))
+            (Array.fill(arms)(0L), Array.fill(arms)(0.0), Array.fill(arms)(0.0)))
 
           val globalState = states.getOrElseUpdate(id,
-            (Array.fill(arms)(0L), Array.fill(arms)(0.0)))
+            (Array.fill(arms)(0L), Array.fill(arms)(0.0), Array.fill(arms)(0.0)))
 
           for (i <- 0 until arms) {
             globalState._1(i) -= oldLocalState._1(i)
             globalState._2(i) -= oldLocalState._2(i)
+            globalState._3(i) -= oldLocalState._3(i)
           }
 
-          val responseUpdate = MABBanditUpdate(id, globalState._1.clone(), globalState._2.clone())
+          val responseUpdate = MABBanditUpdate(id,
+            globalState._1.clone(),
+            globalState._2.clone(),
+            globalState._3.clone())
 
           for (i <- 0 until arms) {
             globalState._1(i) += plays(i)
             globalState._2(i) += rewards(i)
+            globalState._3(i) += rewardsSquared(i)
           }
 
-          executorState.put(id, (plays, rewards))
+          executorState.put(id, (plays, rewards, rewardsSquared))
           responseUpdate
 
         case ContextualBanditUpdate(id, features, rewards) =>

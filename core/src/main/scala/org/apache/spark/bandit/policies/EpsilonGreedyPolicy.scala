@@ -35,7 +35,8 @@ private[spark] class EpsilonGreedyPolicy(numArms: Int, epsilon: Double)
 
   override protected def estimateRewards(playsToMake: Int,
                                          totalPlays: Array[Long],
-                                         totalRewards: Array[Double]): Seq[Double] = {
+                                         totalRewards: Array[Double],
+                                         totalRewardsSquared: Array[Double]): Seq[Double] = {
     (0 until numArms).map { arm =>
       if (totalPlays(arm) > 0) {
         totalRewards(arm) / totalPlays(arm)
