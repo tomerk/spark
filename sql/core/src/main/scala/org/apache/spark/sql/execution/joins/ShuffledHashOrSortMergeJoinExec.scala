@@ -90,12 +90,12 @@ case class ShuffledHashOrSortMergeJoinExec(
     /*val leftSorter = new ExternalSorter[InternalRow, Null, InternalRow](
       TaskContext.get(), ordering = Some(keyOrdering))
     leftSorter.insertAll(leftList.iterator.map(r => (r, null)))*/
-    val leftIter = leftList.iterator//leftList.sorted(keyOrdering).iterator//leftSorter.iterator.map(_._1)
+    val leftIter = leftList.iterator
 
     /*val rightSorter = new ExternalSorter[InternalRow, Null, InternalRow](
       TaskContext.get(), ordering = Some(keyOrdering))
     rightSorter.insertAll(rightList.iterator.map(r => (r, null)))*/
-    val rightIter = rightList.iterator//rightList.sorted(keyOrdering).iterator//rightSorter.iterator.map(_._1)
+    val rightIter = rightList.iterator
     val numOutputRows = in._3
 
     joinType match {
