@@ -22,6 +22,7 @@ import java.io.ObjectOutputStream
 import org.apache.spark.internal.Logging
 
 sealed trait BanditPolicyParams
+case class ConstantPolicyParams(arm: Int) extends BanditPolicyParams
 case class EpsilonGreedyPolicyParams(epsilon: Double = 0.2) extends BanditPolicyParams
 case class UCB1PolicyParams(rewardRange: Double = 1.0) extends BanditPolicyParams
 case class GaussianThompsonSamplingPolicyParams(
