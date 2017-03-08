@@ -20,12 +20,11 @@ package org.apache.spark.bandit.policies
 import breeze.stats.distributions.Gaussian
 
 /**
- * Thompson Sampling with Gaussian priors that have a variance of 1,
- * from:
+ * Thompson Sampling with Gaussian priors (using sample variance).
+ *
+ * Modified from gaussian priorsthat have a variance of 1, from:
  * https://bandits.wikischolars.columbia.edu/file/view/Lecture+4.pdf
  *
- * Fixme: This prior is ridiculous. We should be observing the running
- * variance of the rewards then using that.
  * @param numArms
  */
 private[spark] class GaussianThompsonSamplingPolicy(
@@ -38,16 +37,17 @@ private[spark] class GaussianThompsonSamplingPolicy(
                                          totalRewardsSquared: Array[Double]): Seq[Double] = {
     (0 until numArms).map { arm =>
       val numPlays = totalPlays(arm)
-      if (numPlays > 0) {
+      if (numPlays > 2) {
         // Variance Computed using naive algorithm from:
         // https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
         val varNumerator = totalRewardsSquared(arm) -
           (totalRewards(arm) * totalRewards(arm)) / totalPlays(arm)
         val runningVariance = varNumerator / (numPlays - 1)
 
+        // Breeze expects sigma as the input to the gaussian, not the variance.
         new Gaussian(
           totalRewards(arm) / (totalPlays(arm) + 1.0),
-          runningVariance / totalPlays(arm)
+          math.sqrt(runningVariance / totalPlays(arm))
         ).draw()
       } else {
         Double.PositiveInfinity

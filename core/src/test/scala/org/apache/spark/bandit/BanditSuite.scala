@@ -33,7 +33,8 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
     conf.set("spark.driver.extraClassPath", sys.props("java.class.path"))
         .set("spark.executor.extraClassPath", sys.props("java.class.path"))
 
-    sc = new SparkContext(s"local-cluster[$numSlaves, $numCoresPerSlave, $memoryPerSlave]", "test", conf)
+    sc = new SparkContext(s"local-cluster[$numSlaves, $numCoresPerSlave, $memoryPerSlave]",
+      "test", conf)
 
     val invOne: Int => Int = numFeatures => {
       val mat = DenseMatrix.rand[Double](100, 100)
@@ -103,7 +104,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
       val arm = policy.chooseArm(1)
 
       logInfo(s"$i: $arm")
-      val reward = rewardDist.draw() - (if (arm == bestArm) 10 else 10.5)
+      val reward = (rewardDist.draw() - (if (arm == bestArm) 10 else 10.5))*0.001
       policy.provideFeedback(arm, 1, reward, reward*reward)
       i += 1
     }
