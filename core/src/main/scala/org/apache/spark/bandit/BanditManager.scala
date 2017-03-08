@@ -249,6 +249,8 @@ private[spark] class BanditManager(
                                           policyParams: BanditPolicyParams,
                                           isLocal: Boolean): Bandit[A, B] = {
     val policy = policyParams match {
+      case ConstantPolicyParams(arm) =>
+        new ConstantPolicy(numArms = arms.length, arm)
       case EpsilonGreedyPolicyParams(epsilon) =>
         new EpsilonGreedyPolicy(numArms = arms.length, epsilon)
       case GaussianThompsonSamplingPolicyParams(multiplier) =>
