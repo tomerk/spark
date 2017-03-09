@@ -22,13 +22,19 @@ import org.apache.spark.SparkEnv
 import org.apache.spark.bandit.policies.BanditPolicy
 import org.apache.spark.internal.Logging
 
+trait BanditTrait[A, B] extends Serializable {
+  def apply(in: A): B
+  def applyAndOutputReward(in: A): (B, Action)
+  def vectorizedApply(in: Seq[A]): Seq[B]
+}
+
 /**
  * The bandit class is used for dynamically tuned methods appearing in spark tasks.
  */
 class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
                                                        val arms: Seq[A => B],
                                                        private var initPolicy: BanditPolicy
-                                                      ) extends Serializable with Logging {
+                                                      ) extends BanditTrait[A, B] with Logging {
 
   @transient private lazy val banditManager = SparkEnv.get.banditManager
   @transient private lazy val policy = {

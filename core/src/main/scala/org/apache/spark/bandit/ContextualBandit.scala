@@ -32,7 +32,7 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
                                                  val arms: Seq[A => B],
                                                  val featureExtractor: A => DenseVector[Double],
                                                  private var initPolicy: ContextualBanditPolicy
-                                                ) extends Serializable with Logging {
+                                                ) extends BanditTrait[A, B] with Logging {
 
   @transient private lazy val banditManager = SparkEnv.get.banditManager
   @transient private lazy val policy = {
