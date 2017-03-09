@@ -73,58 +73,66 @@ private[spark] class BanditManager(
 
         // Used to provide the implicit parameter of `Future` methods.
         val forwardMessageExecutionContext =
-        ExecutionContext.fromExecutor(eventLoopThread,
-          t => t match {
-            case ie: InterruptedException => // Exit normally
-            case e: Throwable =>
-              logError(e.getMessage, e)
-              System.exit(SparkExitCode.UNCAUGHT_EXCEPTION)
-          })
+          ExecutionContext.fromExecutor(eventLoopThread,
+            t => t match {
+              case ie: InterruptedException => // Exit normally
+              case e: Throwable =>
+                logError(e.getMessage, e)
+                System.exit(SparkExitCode.UNCAUGHT_EXCEPTION)
+            })
 
-        banditDistributedUpdateTask = eventLoopThread.scheduleAtFixedRate(new Runnable {
-          override def run(): Unit = Utils.tryLogNonFatalError {
-            // Clone & clear the ids to update
-            val ids = updatedBandits.synchronized {
-              val idSetClone = updatedBandits.toSeq
-              updatedBandits.clear()
-              idSetClone
-            }
-
-            // Construct the updates, setting locks as necessary
-            val updates: Seq[BanditUpdate] = ids.map { id =>
-              if (policies.containsKey(id)) {
-                val (policy, (localPlays, localRewards, localRewardsSecMoment)) = policies.get(id)
-                policy.stateLock.synchronized {
-                  MABBanditUpdate(
-                    id,
-                    localPlays.clone(),
-                    localRewards.clone(),
-                    localRewardsSecMoment.clone())
-                }
-              } else {
-                val (policy, (localFeatures, localRewards)) = contextualPolicies.get(id)
-                policy.stateLock.synchronized {
-                  ContextualBanditUpdate(id, localFeatures.clone(), localRewards.clone())
-                }
+        val communicationRate = conf.getTimeAsMs("spark.bandits.communicationRate", "5s")
+        if (communicationRate > 0) {
+          banditDistributedUpdateTask = eventLoopThread.scheduleAtFixedRate(new Runnable {
+            override def run(): Unit = Utils.tryLogNonFatalError {
+              // Clone & clear the ids to update
+              val ids = updatedBandits.synchronized {
+                val idSetClone = updatedBandits.toSeq
+                updatedBandits.clear()
+                idSetClone
               }
-            }
 
-            if (updates.nonEmpty) {
-              master.ask[SendDistributedUpdates](SendLocalUpdates(executorId, updates)).onComplete {
-                _.foreach {
-                  _.updates.foreach {
-                    case ContextualBanditUpdate(id, features, rewards) =>
-                      mergeDistributedContextualFeedback(id, features, rewards)
-                    case MABBanditUpdate(id, plays, rewards, rewardsSquared) =>
-                      mergeDistributedFeedback(id, plays, rewards, rewardsSquared)
+              // Construct the updates, setting locks as necessary
+              val updates: Seq[BanditUpdate] = ids.map { id =>
+                if (policies.containsKey(id)) {
+                  val (
+                    policy,
+                    (localPlays, localRewards, localRewardsSecMoment)
+                    ) = policies.get(id)
+                  policy.stateLock.synchronized {
+                    MABBanditUpdate(
+                      id,
+                      localPlays.clone(),
+                      localRewards.clone(),
+                      localRewardsSecMoment.clone())
+                  }
+                } else {
+                  val (policy, (localFeatures, localRewards)) = contextualPolicies.get(id)
+                  policy.stateLock.synchronized {
+                    ContextualBanditUpdate(id, localFeatures.clone(), localRewards.clone())
                   }
                 }
-              }(forwardMessageExecutionContext)
-            }
-          }
-        }, 0, 5000, TimeUnit.MILLISECONDS)
+              }
 
-        initialized = true
+              if (updates.nonEmpty) {
+                master.ask[SendDistributedUpdates](
+                  SendLocalUpdates(executorId, updates)
+                ).onComplete {
+                  _.foreach {
+                    _.updates.foreach {
+                      case ContextualBanditUpdate(id, features, rewards) =>
+                        mergeDistributedContextualFeedback(id, features, rewards)
+                      case MABBanditUpdate(id, plays, rewards, rewardsSquared) =>
+                        mergeDistributedFeedback(id, plays, rewards, rewardsSquared)
+                    }
+                  }
+                }(forwardMessageExecutionContext)
+              }
+            }
+          }, 0, communicationRate, TimeUnit.MILLISECONDS)
+
+          initialized = true
+        }
       }
     }
   }

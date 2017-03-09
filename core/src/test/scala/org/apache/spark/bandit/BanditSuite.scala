@@ -31,7 +31,8 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
     val conf = new SparkConf
     //conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
     conf.set("spark.driver.extraClassPath", sys.props("java.class.path"))
-        .set("spark.executor.extraClassPath", sys.props("java.class.path"))
+      .set("spark.executor.extraClassPath", sys.props("java.class.path"))
+      .set("spark.bandits.communicationRate", "5s")
 
     sc = new SparkContext(s"local-cluster[$numSlaves, $numCoresPerSlave, $memoryPerSlave]",
       "test", conf)
