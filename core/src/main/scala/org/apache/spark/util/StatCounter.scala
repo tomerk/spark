@@ -85,6 +85,18 @@ class StatCounter(values: TraversableOnce[Double]) extends Serializable {
     }
   }
 
+  /** Produce a copy that has it sort of removed from count, mean, and std dev. */
+  def psuedoRemove(other: StatCounter): StatCounter = {
+    val newCounter = StatCounter()
+    newCounter.m2 += m2 - other.m2
+    newCounter.n = n - other.n
+    newCounter.mu = (sum - other.sum)/newCounter.n
+    newCounter.maxValue = maxValue
+    newCounter.minValue = minValue
+    newCounter
+  }
+
+
   /** Clone this StatCounter */
   def copy(): StatCounter = {
     val other = new StatCounter

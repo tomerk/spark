@@ -21,6 +21,7 @@ import breeze.linalg.{DenseMatrix, DenseVector, inv}
 import breeze.stats.distributions.{MultivariateGaussian, Rand}
 import org.apache.spark._
 import org.apache.spark.bandit.policies._
+import org.apache.spark.util.StatCounter
 
 class BanditSuite extends SparkFunSuite with LocalSparkContext {
 
@@ -70,7 +71,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
   test("Test Contextual Bandit Timings") {
     val numFeatures = 3
     val arms = 10
-    val policy = new LinUCBPolicy(numArms = arms, numFeatures = numFeatures, 2.36)
+    val policy = new LinThompsonSamplingPolicy(numArms = arms, numFeatures = numFeatures, 1)
 
     val bestArm = 3
 
@@ -83,8 +84,8 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
       val arm = policy.chooseArm(featureVec)
 
       logInfo(s"$i: $arm")
-      val reward = rewardDist.draw() - (if (arm == bestArm) 10 else 13)
-      policy.provideFeedback(arm, featureVec, reward)
+      val reward = (rewardDist.draw() - (if (arm == bestArm) 10 else 11.5)) * 1e-10
+      policy.provideFeedback(arm, featureVec, StatCounter(reward))
       i += 1
     }
     val end = System.currentTimeMillis()

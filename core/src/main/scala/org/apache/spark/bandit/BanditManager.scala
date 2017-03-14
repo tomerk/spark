@@ -25,7 +25,7 @@ import breeze.linalg.{DenseMatrix, DenseVector}
 import org.apache.spark.bandit.policies._
 import org.apache.spark.internal.Logging
 import org.apache.spark.rpc.{RpcEndpointRef, RpcEnv}
-import org.apache.spark.util.{SparkExitCode, ThreadUtils, Utils}
+import org.apache.spark.util.{SparkExitCode, StatCounter, ThreadUtils, Utils}
 import org.apache.spark.{SecurityManager, SparkConf}
 
 import scala.collection.mutable
@@ -53,7 +53,8 @@ private[spark] class BanditManager(
     new ConcurrentHashMap[Long, (BanditPolicy, (Array[Long], Array[Double], Array[Double]))]()
   }
   private val contextualPolicies = new ConcurrentHashMap[Long,
-      (ContextualBanditPolicy, (Array[DenseMatrix[Double]], Array[DenseVector[Double]]))]()
+      (ContextualBanditPolicy, (
+        Array[DenseMatrix[Double]], Array[DenseVector[Double]], Array[StatCounter]))]()
   private val updatedBandits = mutable.Set[Long]()
 
   initialize()
@@ -107,9 +108,14 @@ private[spark] class BanditManager(
                       localRewardsSecMoment.clone())
                   }
                 } else {
-                  val (policy, (localFeatures, localRewards)) = contextualPolicies.get(id)
+                  val (policy, (localFeatures, localRewards, localRewardStats)) = {
+                    contextualPolicies.get(id)
+                  }
                   policy.stateLock.synchronized {
-                    ContextualBanditUpdate(id, localFeatures.clone(), localRewards.clone())
+                    ContextualBanditUpdate(id,
+                      localFeatures.clone(),
+                      localRewards.clone(),
+                      localRewardStats)
                   }
                 }
               }
@@ -120,8 +126,8 @@ private[spark] class BanditManager(
                 ).onComplete {
                   _.foreach {
                     _.updates.foreach {
-                      case ContextualBanditUpdate(id, features, rewards) =>
-                        mergeDistributedContextualFeedback(id, features, rewards)
+                      case ContextualBanditUpdate(id, features, rewards, rewardStats) =>
+                        mergeDistributedContextualFeedback(id, features, rewards, rewardStats)
                       case MABBanditUpdate(id, plays, rewards, rewardsSquared) =>
                         mergeDistributedFeedback(id, plays, rewards, rewardsSquared)
                     }
@@ -163,8 +169,12 @@ private[spark] class BanditManager(
       DenseVector.zeros(policy.numFeatures)
     }
 
+    val initRewardStats: Array[StatCounter] = Array.fill(policy.numArms) {
+      StatCounter()
+    }
+
     contextualPolicies.putIfAbsent(id, (policy,
-      (initFeatures, initRewards)))
+      (initFeatures, initRewards, initRewardStats)))
     contextualPolicies.get(id)._1
   }
 
@@ -210,15 +220,16 @@ private[spark] class BanditManager(
   def provideContextualFeedback(id: Long,
                                 arm: Int,
                                 features: DenseVector[Double],
-                                reward: Double): Unit = {
-    val (policy, (localFeatures, localRewards)) = contextualPolicies.get(id)
+                                rewardStats: StatCounter): Unit = {
+    val (policy, (localFeatures, localRewards, localRewardStats)) = contextualPolicies.get(id)
     val xxT = features * features.t
-    val rx = reward * features
+    val rx = rewardStats.sum * features
 
     policy.stateLock.synchronized {
-      policy.provideFeedback(arm, xxT, rx)
+      policy.provideFeedback(arm, xxT, rx, rewardStats)
       localFeatures(arm) = localFeatures(arm) + xxT
       localRewards(arm) = localRewards(arm) + rx
+      localRewardStats(arm).merge(rewardStats)
     }
 
     updatedBandits.synchronized {
@@ -228,18 +239,20 @@ private[spark] class BanditManager(
 
   def mergeDistributedContextualFeedback(id: Long,
                                          features: Array[DenseMatrix[Double]],
-                                         rewards: Array[DenseVector[Double]]): Unit = {
+                                         rewards: Array[DenseVector[Double]],
+                                         rewardStats: Array[StatCounter]): Unit = {
     logInfo(s"feedback: $id, ${features.toSeq} ${rewards.toSeq}")
 
-    val (policy, (localFeatures, localRewards)) = contextualPolicies.get(id)
+    val (policy, (localFeatures, localRewards, localRewardStats)) = contextualPolicies.get(id)
 
     val eye = DenseMatrix.eye[Double](policy.numFeatures)
     policy.stateLock.synchronized {
       for (arm <- 0 until policy.numArms) {
         val newFeatures = eye + localFeatures(arm) + features(arm)
         val newRewards = localRewards(arm) + rewards(arm)
+        val newRewardStats = localRewardStats(arm).copy().merge(rewardStats(arm))
 
-        policy.setState(arm, newFeatures, newRewards)
+        policy.setState(arm, newFeatures, newRewards, newRewardStats)
       }
     }
   }

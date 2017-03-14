@@ -20,6 +20,7 @@ package org.apache.spark.bandit.policies
 import java.io.ObjectOutputStream
 
 import breeze.linalg.{DenseMatrix, DenseVector}
+import org.apache.spark.util.StatCounter
 
 sealed trait ContextualBanditPolicyParams
 case class ContextualEpsilonGreedyPolicyParams(numFeatures: Int, epsilon: Double = 0.2)
@@ -37,6 +38,9 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
   val rewardAccumulator: Array[DenseVector[Double]] = {
     Array.fill(numArms)(DenseVector.zeros(numFeatures))
   }
+  val rewardStatsAccumulator: Array[StatCounter] = {
+    Array.fill(numArms)(StatCounter())
+  }
 
   def chooseArm(features: DenseVector[Double]): Int = {
     val rewards = estimateRewards(features)
@@ -47,55 +51,55 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
 
   private def estimateRewards(features: DenseVector[Double]): Seq[Double] = {
     (0 until numArms).map { arm =>
-      val (armFeaturesAcc, armRewardsAcc) = stateLock.synchronized {
-        (featuresAccumulator(arm), rewardAccumulator(arm))
+      val (armFeaturesAcc, armRewardsAcc, rewardStatsAcc) = stateLock.synchronized {
+        (featuresAccumulator(arm), rewardAccumulator(arm), rewardStatsAccumulator(arm))
       }
-      estimateRewards(features, armFeaturesAcc, armRewardsAcc)
+      estimateRewards(features, armFeaturesAcc, armRewardsAcc, rewardStatsAcc)
     }
   }
-
-  private def estimateRewardsAndOutputModel(features: DenseVector[Double]): (Seq[Double]) = {
-    (0 until numArms).map { arm =>
-      val (armFeaturesAcc, armRewardsAcc) = stateLock.synchronized {
-        (featuresAccumulator(arm), rewardAccumulator(arm))
-      }
-      estimateRewards(features, armFeaturesAcc, armRewardsAcc)
-    }
-  }
-
 
   protected def estimateRewards(features: DenseVector[Double],
                                 armFeaturesAcc: DenseMatrix[Double],
-                                armRewardsAcc: DenseVector[Double]): Double
+                                armRewardsAcc: DenseVector[Double],
+                                rewardStatsAcc: StatCounter): Double
 
-  def provideFeedback(arm: Int, features: DenseVector[Double], reward: Double): Unit = {
+  def provideFeedback(arm: Int,
+                      features: DenseVector[Double],
+                      rewardStats: StatCounter): Unit = {
     val xxT = features * features.t
-    val rx = reward * features
+    val rx = rewardStats.sum * features
 
-    provideFeedback(arm, xxT, rx)
+    provideFeedback(arm, xxT, rx, rewardStats)
   }
 
   def provideFeedback(arm: Int,
                       features: DenseMatrix[Double],
-                      reward: DenseVector[Double]): Unit = {
+                      rewardVec: DenseVector[Double],
+                      rewardStats: StatCounter): Unit = {
     stateLock.synchronized {
       // Not an in-place update for the matrices, leaves them valid when used elsewhere!
       featuresAccumulator(arm) = featuresAccumulator(arm) + features
-      rewardAccumulator(arm) = rewardAccumulator(arm) + reward
+      rewardAccumulator(arm) = rewardAccumulator(arm) + rewardVec
+      rewardStatsAccumulator(arm).merge(rewardStats)
     }
   }
 
   def setState(features: Array[DenseMatrix[Double]],
-               rewards: Array[DenseVector[Double]]): Unit = {
+               rewards: Array[DenseVector[Double]],
+               rewardStats: Array[StatCounter]): Unit = {
     for (arm <- 0 until numArms) stateLock.synchronized {
-      setState(arm, features(arm), rewards(arm))
+      setState(arm, features(arm), rewards(arm), rewardStats(arm))
     }
   }
 
-  def setState(arm: Int, features: DenseMatrix[Double], rewards: DenseVector[Double]): Unit = {
+  def setState(arm: Int,
+               features: DenseMatrix[Double],
+               rewards: DenseVector[Double],
+               rewardStats: StatCounter): Unit = {
     stateLock.synchronized {
       featuresAccumulator(arm) = features
       rewardAccumulator(arm) = rewards
+      rewardStatsAccumulator(arm) = rewardStats
     }
   }
 
