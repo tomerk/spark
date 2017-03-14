@@ -18,6 +18,7 @@
 package org.apache.spark.bandit.policies
 
 import breeze.linalg.{DenseMatrix, DenseVector}
+import org.apache.spark.util.StatCounter
 
 /**
  * Note: Unplayed arms will default to zero reward. Fine in the case where our rewards
@@ -39,7 +40,8 @@ private[spark] class ContextualEpsilonGreedyPolicy(numArms: Int, numFeatures: In
 
   override protected def estimateRewards(features: DenseVector[Double],
                                          armFeaturesAcc: DenseMatrix[Double],
-                                         armRewardsAcc: DenseVector[Double]): Double = {
+                                         armRewardsAcc: DenseVector[Double],
+                                         armRewardStatsAcc: StatCounter): Double = {
     // Note: Unplayed arms will default to zero reward. Fine
     val coefficientEstimate = armFeaturesAcc \ armRewardsAcc
     coefficientEstimate.t*features
