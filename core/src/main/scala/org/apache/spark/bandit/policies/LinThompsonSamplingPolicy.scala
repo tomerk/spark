@@ -17,9 +17,13 @@
 
 package org.apache.spark.bandit.policies
 
-import breeze.linalg.{DenseMatrix, DenseVector, inv}
-import breeze.stats.distributions.MultivariateGaussian
+import breeze.linalg.{DenseMatrix, DenseVector, cholesky, diag, inv, sum}
+import breeze.numerics.log
+import breeze.stats.distributions._
 import org.apache.spark.util.StatCounter
+
+import scala.math.log1p
+import scala.runtime.ScalaRunTime
 
 /**
  * Linear Thompson Sampling,
@@ -49,9 +53,10 @@ private[spark] class LinThompsonSamplingPolicy(numArms: Int, numFeatures: Int, v
     if (armRewardsStats.count > 2) {
 
       val coefficientMean = armFeaturesAcc \ armRewardsAcc
-      val coefficientDist = MultivariateGaussian(
+      val coefficientDist = InverseCovarianceMultivariateGaussian(
         coefficientMean,
-        v * armRewardsStats.sampleVariance * inv(armFeaturesAcc))
+        // We divide because this is the inverse covariance
+         armFeaturesAcc / (v * armRewardsStats.sampleVariance))
       val coefficientSample = coefficientDist.draw()
 
       coefficientSample.t * features
@@ -60,3 +65,46 @@ private[spark] class LinThompsonSamplingPolicy(numArms: Int, numFeatures: Int, v
     }
   }
 }
+
+/**
+ * Represents a Gaussian distribution over a single real variable.
+ *
+ * @author dlwh, modified by tomerk11 to take inverse covariance as input
+ */
+case class InverseCovarianceMultivariateGaussian(
+                                 mean: DenseVector[Double],
+                                 inverseCovariance : DenseMatrix[Double]
+                               )(implicit rand: RandBasis = Rand)
+  extends ContinuousDistr[DenseVector[Double]] with
+    Moments[DenseVector[Double], DenseMatrix[Double]] {
+  def draw(): DenseVector[Double] = {
+    val z: DenseVector[Double] = DenseVector.rand(mean.length, rand.gaussian(0, 1))
+    root * z += mean
+  }
+
+  private val root: DenseMatrix[Double] = inv(cholesky(inverseCovariance)).t
+
+  override def toString(): String = ScalaRunTime._toString(this)
+
+  override def unnormalizedLogPdf(t: DenseVector[Double]): Double = {
+    val centered = t - mean
+    val slv = inverseCovariance * centered
+
+    -(slv dot centered) / 2.0
+  }
+
+  override lazy val logNormalizer: Double = {
+    // determinant of the cholesky decomp is the sqrt of the determinant of the cov matrix
+    // this is the log det of the cholesky decomp
+    val det = sum(log(diag(root)))
+    mean.length/2 *  log(2 * math.Pi) + det
+  }
+
+  def variance: DenseMatrix[Double] = root * root.t
+  def mode: DenseVector[Double] = mean
+  lazy val entropy: Double = {
+    mean.length * log1p(2 * math.Pi) + sum(log(diag(root)))
+  }
+}
+
+
