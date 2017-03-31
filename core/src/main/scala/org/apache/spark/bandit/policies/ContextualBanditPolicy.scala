@@ -27,7 +27,9 @@ case class ContextualEpsilonGreedyPolicyParams(numFeatures: Int, epsilon: Double
   extends ContextualBanditPolicyParams
 case class LinUCBPolicyParams(numFeatures: Int, alpha: Double = 2.36)
   extends ContextualBanditPolicyParams
-case class LinThompsonSamplingPolicyParams(numFeatures: Int, v: Double = 5.0)
+case class LinThompsonSamplingPolicyParams(numFeatures: Int,
+                                           v: Double = 5.0,
+                                           useCholesky: Boolean = false)
   extends ContextualBanditPolicyParams
 
 abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) extends Serializable {

@@ -69,9 +69,9 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
 
 
   test("Test Contextual Bandit Timings") {
-    val numFeatures = 3
+    val numFeatures = 10
     val arms = 10
-    val policy = new LinThompsonSamplingPolicy(numArms = arms, numFeatures = numFeatures, 1)
+    val policy = new LinUCBPolicy(numArms = arms, numFeatures = numFeatures, 1)
 
     val bestArm = 3
 
@@ -83,7 +83,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
       val featureVec = DenseVector.rand[Double](numFeatures)
       val arm = policy.chooseArm(featureVec)
 
-      logInfo(s"$i: $arm")
+      //logInfo(s"$i: $arm")
       val reward = (rewardDist.draw() - (if (arm == bestArm) 10 else 11.5)) * 1e-10
       policy.provideFeedback(arm, featureVec, StatCounter(reward))
       i += 1
