@@ -301,8 +301,8 @@ private[spark] class BanditManager(
     val policy = policyParams match {
       case ContextualEpsilonGreedyPolicyParams(numFeatures, epsilon) =>
         new ContextualEpsilonGreedyPolicy(numArms = arms.length, numFeatures, epsilon)
-      case LinThompsonSamplingPolicyParams(numFeatures, v) =>
-        new LinThompsonSamplingPolicy(numArms = arms.length, numFeatures, v)
+      case LinThompsonSamplingPolicyParams(numFeatures, v, useCholesky) =>
+        new LinThompsonSamplingPolicy(numArms = arms.length, numFeatures, v, useCholesky)
       case LinUCBPolicyParams(numFeatures, alpha) =>
         new LinUCBPolicy(numArms = arms.length, numFeatures, alpha)
     }

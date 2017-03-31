@@ -17,7 +17,7 @@
 
 package org.apache.spark.bandit.policies
 
-import breeze.linalg.{DenseMatrix, DenseVector, cholesky, diag, inv, sum}
+import breeze.linalg.{DenseMatrix, DenseVector, cholesky, diag, eigSym, inv, max, sum}
 import breeze.numerics.log
 import breeze.stats.distributions._
 import org.apache.spark.util.StatCounter
@@ -40,8 +40,13 @@ import scala.runtime.ScalaRunTime
  *          Practically speaking I'm not really sure what values to set,
  *          so I'll default to 5? Larger v means larger variance & more
  *          weight on sampling arms w/o the highest expectation
+ * @param useCholesky Use cholesky as opposed to eigendecomposition. Much faster,
+ *                    but risks erroring for some matrices.
  */
-private[spark] class LinThompsonSamplingPolicy(numArms: Int, numFeatures: Int, v: Double)
+private[spark] class LinThompsonSamplingPolicy(numArms: Int,
+                                               numFeatures: Int,
+                                               v: Double,
+                                               useCholesky: Boolean)
   extends ContextualBanditPolicy(numArms, numFeatures) {
   override protected def estimateRewards(features: DenseVector[Double],
                                          armFeaturesAcc: DenseMatrix[Double],
@@ -56,7 +61,8 @@ private[spark] class LinThompsonSamplingPolicy(numArms: Int, numFeatures: Int, v
       val coefficientDist = InverseCovarianceMultivariateGaussian(
         coefficientMean,
         // We divide because this is the inverse covariance
-         armFeaturesAcc / (v * armRewardsStats.sampleVariance))
+        armFeaturesAcc / (v * armRewardsStats.sampleVariance),
+        useCholesky = useCholesky)
       val coefficientSample = coefficientDist.draw()
 
       coefficientSample.t * features
@@ -69,42 +75,55 @@ private[spark] class LinThompsonSamplingPolicy(numArms: Int, numFeatures: Int, v
 /**
  * Represents a Gaussian distribution over a single real variable.
  *
- * @author dlwh, modified by tomerk11 to take inverse covariance as input
+ * Combination of Breeze multivariate gaussian draw code & spark multivariate gaussian
  */
 case class InverseCovarianceMultivariateGaussian(
                                  mean: DenseVector[Double],
-                                 inverseCovariance : DenseMatrix[Double]
-                               )(implicit rand: RandBasis = Rand)
-  extends ContinuousDistr[DenseVector[Double]] with
-    Moments[DenseVector[Double], DenseMatrix[Double]] {
+                                 inverseCovariance : DenseMatrix[Double],
+                                 useCholesky: Boolean
+                               )(implicit rand: RandBasis = Rand) {
   def draw(): DenseVector[Double] = {
     val z: DenseVector[Double] = DenseVector.rand(mean.length, rand.gaussian(0, 1))
     root * z += mean
   }
 
-  private val root: DenseMatrix[Double] = inv(cholesky(inverseCovariance)).t
+  private val root: DenseMatrix[Double] = {
+    if (useCholesky) {
+      inv(cholesky(inverseCovariance)).t
+    } else {
+      val eigSym.EigSym(d, u) = eigSym(inverseCovariance) // sigma = u * diag(d) * u.t
 
-  override def toString(): String = ScalaRunTime._toString(this)
+      // For numerical stability, values are considered to be non-zero only if they exceed tol.
+      // This prevents any inverted value from exceeding (eps * n * max(d))^-1
+      val tol = MLToleranceUtilsCopy.EPSILON * max(d) * d.length
 
-  override def unnormalizedLogPdf(t: DenseVector[Double]): Double = {
-    val centered = t - mean
-    val slv = inverseCovariance * centered
+      try {
+        // log(pseudo-determinant) is sum of the logs of all non-zero singular values
+        //val logPseudoDetSigma = d.activeValuesIterator.filter(_ > tol).map(math.log).sum
 
-    -(slv dot centered) / 2.0
-  }
+        // calculate the root-pseudo-inverse of the diagonal matrix of singular values
+        // by inverting the square root of all non-zero values
+        val pinvS = diag(d.map(v => if (v > tol) math.sqrt(1.0 / v) else 0.0))
 
-  override lazy val logNormalizer: Double = {
-    // determinant of the cholesky decomp is the sqrt of the determinant of the cov matrix
-    // this is the log det of the cholesky decomp
-    val det = sum(log(diag(root)))
-    mean.length/2 *  log(2 * math.Pi) + det
-  }
-
-  def variance: DenseMatrix[Double] = root * root.t
-  def mode: DenseVector[Double] = mean
-  lazy val entropy: Double = {
-    mean.length * log1p(2 * math.Pi) + sum(log(diag(root)))
+        pinvS * u.t
+      } catch {
+        case uex: UnsupportedOperationException =>
+          throw new IllegalArgumentException("Covariance matrix has no non-zero singular values")
+      }
+    }
   }
 }
+
+private[spark] object MLToleranceUtilsCopy {
+
+  lazy val EPSILON = {
+    var eps = 1.0
+    while ((1.0 + (eps / 2.0)) != 1.0) {
+      eps /= 2.0
+    }
+    eps
+  }
+}
+
 
 
