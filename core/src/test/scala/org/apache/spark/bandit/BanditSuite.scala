@@ -19,6 +19,7 @@ package org.apache.spark.bandit
 
 import breeze.linalg.{DenseMatrix, DenseVector, inv}
 import breeze.stats.distributions.{MultivariateGaussian, Rand}
+import org.apache.commons.math3.optim.linear._
 import org.apache.spark._
 import org.apache.spark.bandit.policies._
 import org.apache.spark.util.StatCounter
@@ -71,9 +72,10 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
   test("Test Contextual Bandit Timings") {
     val numFeatures = 10
     val arms = 10
-    val policy = new LinUCBPolicy(numArms = arms, numFeatures = numFeatures, 1)
+    val policy = new LinThompsonSamplingPolicy(numArms = arms, numFeatures = numFeatures, 1,
+      useCholesky = true)
 
-    val bestArm = 3
+    val bestArm = 7
 
     val rewardDist = Rand.gaussian
 
@@ -83,7 +85,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
       val featureVec = DenseVector.rand[Double](numFeatures)
       val arm = policy.chooseArm(featureVec)
 
-      //logInfo(s"$i: $arm")
+      logInfo(s"$i: $arm")
       val reward = (rewardDist.draw() - (if (arm == bestArm) 10 else 11.5)) * 1e-10
       policy.provideFeedback(arm, featureVec, StatCounter(reward))
       i += 1
@@ -92,9 +94,42 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
     logInfo(s"${(end - start)/10000.0} millis per round")
   }
 
+  test("Test Simplex timings") {
+    var i = 0
+    val numArms = 20
+    val start = System.currentTimeMillis()
+    val solver = new SimplexSolver()
+    val ones = DenseVector.ones[Double](numArms).toArray
+    val threshold = 0.3
+    val n = 1000000.0
+    while (i < n) {
+      val objectiveVec = DenseVector.rand[Double](numArms)
+      val objective = new LinearObjectiveFunction(objectiveVec.toArray, 0)
+      val nonNegative = new NonNegativeConstraint(true)
+      val probabilityConstraint = new LinearConstraint(ones, Relationship.EQ, 1.0)
+      val thresholdVec = DenseVector.rand[Double](numArms)
+      val thresholdConstraint = new LinearConstraint(
+        thresholdVec.toArray, Relationship.GEQ, threshold)
+
+      val constraintSet = new LinearConstraintSet(
+        probabilityConstraint, thresholdConstraint)
+
+      try {
+        val results = solver.optimize(objective, nonNegative, constraintSet)
+        //logInfo(s"${results.getPoint.toList} ${results.getValue}")
+      } catch {
+        case e: NoFeasibleSolutionException =>
+          logInfo("No feasible solution :(")
+      }
+      i += 1
+    }
+    val end = System.currentTimeMillis()
+    logInfo(s"${(end - start)/n} millis per round")
+  }
+
   test("Test Bandit Timings") {
     val arms = 10
-    val policy = new GaussianThompsonSamplingPolicy(numArms = arms, varianceMultiplier = 1.0)
+    val policy = new GaussianBayesUCBPolicy(numArms = arms, 0.25)
 
     val bestArm = 3
 
@@ -106,7 +141,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
       val arm = policy.chooseArm(1)
 
       logInfo(s"$i: $arm")
-      val reward = (rewardDist.draw() - (if (arm == bestArm) 10 else 10.5))*0.001
+      val reward = (rewardDist.draw() - (if (arm == bestArm) 10 else 10.2))*0.001
       policy.provideFeedback(arm, 1, reward, reward*reward)
       i += 1
     }
