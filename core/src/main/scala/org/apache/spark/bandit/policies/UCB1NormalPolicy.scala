@@ -17,6 +17,8 @@
 
 package org.apache.spark.bandit.policies
 
+import org.apache.spark.bandit.WeightedStats
+
 /**
  * UCB-Normal algorithm.
  *
@@ -27,21 +29,16 @@ private[spark] class UCB1NormalPolicy(
                                            boundsConst: Double
                                          ) extends BanditPolicy(numArms) {
   override protected def estimateRewards(playsToMake: Int,
-                                         totalPlays: Array[Long],
-                                         totalRewards: Array[Double],
-                                         totalRewardsSquared: Array[Double]): Seq[Double] = {
-    val n = totalPlays.sum
+                                         totalRewards: Array[WeightedStats]
+                                        ): Seq[Double] = {
+    val n = totalRewards.map(_.totalWeights).sum
     (0 until numArms).map { arm =>
-      val numPlays = totalPlays(arm)
-      if (numPlays > 2) {
-        // Variance Computed using naive algorithm from:
-        // https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
-        val varNumerator = totalRewardsSquared(arm) -
-          (totalRewards(arm) * totalRewards(arm)) / totalPlays(arm)
-        val runningVariance = varNumerator / (numPlays - 1)
+      val numPlays = totalRewards(arm).totalWeights
+      if (numPlays >= 2) {
+        val runningVariance = totalRewards(arm).variance
 
-        (totalRewards(arm) / totalPlays(arm)) +
-          boundsConst * math.sqrt(runningVariance/totalPlays(arm) * 16.0*math.log(n-1))
+        totalRewards(arm).mean +
+          boundsConst * math.sqrt(runningVariance/numPlays * 16.0*math.log(n-1))
       } else {
         Double.PositiveInfinity
       }

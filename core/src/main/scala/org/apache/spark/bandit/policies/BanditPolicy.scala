@@ -19,7 +19,7 @@ package org.apache.spark.bandit.policies
 
 import java.io.ObjectOutputStream
 
-import org.apache.spark.bandit.UnivariateOnlineSummarizer
+import org.apache.spark.bandit.WeightedStats
 import org.apache.spark.internal.Logging
 
 sealed trait BanditPolicyParams
@@ -34,8 +34,8 @@ case class GaussianThompsonSamplingPolicyParams(
 
 abstract class BanditPolicy(val numArms: Int) extends Logging with Serializable {
   @transient lazy private[spark] val stateLock = this
-  private val rewards: Array[UnivariateOnlineSummarizer] =
-    Array.fill(numArms)(new UnivariateOnlineSummarizer())
+  private val rewards: Array[WeightedStats] =
+    Array.fill(numArms)(new WeightedStats())
 
   def chooseArm(plays: Int): Int = {
     val rewardEstimates = estimateRewards(plays)
@@ -54,7 +54,7 @@ abstract class BanditPolicy(val numArms: Int) extends Logging with Serializable 
   }
 
   protected def estimateRewards(playsToMake: Int,
-                                observedRewards: Array[UnivariateOnlineSummarizer]): Seq[Double]
+                                observedRewards: Array[WeightedStats]): Seq[Double]
 
   def provideFeedback(arm: Int,
                       plays: Long,
@@ -62,13 +62,13 @@ abstract class BanditPolicy(val numArms: Int) extends Logging with Serializable 
     rewards(arm).addMultiple(reward, 1.0, plays)
   }
 
-  def setState(newRewards: Array[UnivariateOnlineSummarizer]): Unit = stateLock.synchronized {
+  def setState(newRewards: Array[WeightedStats]): Unit = stateLock.synchronized {
     for (i <- 0 until numArms) {
       setState(i, newRewards(i))
     }
   }
 
-  def setState(arm: Int, rewardObservations: UnivariateOnlineSummarizer): Unit =
+  def setState(arm: Int, rewardObservations: WeightedStats): Unit =
     stateLock.synchronized {
       rewards(arm) = rewardObservations
   }

@@ -17,6 +17,8 @@
 
 package org.apache.spark.bandit.policies
 
+import org.apache.spark.bandit.WeightedStats
+
 /**
  * Constant Policy that always selects the same arm
  *
@@ -30,9 +32,7 @@ private[spark] class ConstantPolicy(numArms: Int, arm: Int)
   }
 
   override protected def estimateRewards(playsToMake: Int,
-                                         totalPlays: Array[Long],
-                                         totalRewards: Array[Double],
-                                         totalRewardsSquared: Array[Double]): Seq[Double] = {
+                                         totalRewards: Array[WeightedStats]): Seq[Double] = {
     (0 until numArms).map { curArm =>
       if (curArm != arm) {
         0

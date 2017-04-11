@@ -17,6 +17,8 @@
 
 package org.apache.spark.bandit.policies
 
+import org.apache.spark.bandit.WeightedStats
+
 /**
  * UCB1, algorithm from:
  * https://homes.di.unimi.it/~cesabian/Pubblicazioni/ml-02.pdf
@@ -33,14 +35,13 @@ package org.apache.spark.bandit.policies
  */
 private[spark] class UCB1Policy(numArms: Int, boundsConst: Double) extends BanditPolicy(numArms) {
   override protected def estimateRewards(playsToMake: Int,
-                                         totalPlays: Array[Long],
-                                         totalRewards: Array[Double],
-                                         totalRewardsSquared: Array[Double]): Seq[Double] = {
-    val n = totalPlays.sum
+                                         totalRewards: Array[WeightedStats]): Seq[Double] = {
+    val n = totalRewards.map(_.totalWeights).sum
     (0 until numArms).map { arm =>
-      if (totalPlays(arm) > 0) {
-        (totalRewards(arm) / totalPlays(arm)) +
-          boundsConst * math.sqrt(2.0*math.log(n)/totalPlays(arm))
+      val numPlays = totalRewards(arm).totalWeights
+      if (numPlays > 0) {
+        totalRewards(arm).mean +
+          boundsConst * math.sqrt(2.0*math.log(n)/numPlays)
       } else {
         Double.PositiveInfinity
       }

@@ -39,7 +39,7 @@ package org.apache.spark.bandit
  * see <a href="https://en.wikipedia.org/wiki/Weighted_arithmetic_mean#Reliability_weights">
  * Reliability weights (Wikipedia)</a>.
  */
-class UnivariateOnlineSummarizer extends Serializable {
+class WeightedStats extends Serializable {
 
   private var currMean: Double = 0
   private var currM2n: Double = 0
@@ -128,7 +128,7 @@ class UnivariateOnlineSummarizer extends Serializable {
    * @param other The other MultivariateOnlineSummarizer to be merged.
    * @return This MultivariateOnlineSummarizer object.
    */
-  def merge(other: UnivariateOnlineSummarizer): this.type = {
+  def merge(other: WeightedStats): this.type = {
     if (this.totalWeightSum != 0.0 && other.totalWeightSum != 0.0) {
 
       totalCnt += other.totalCnt
@@ -279,7 +279,7 @@ class UnivariateOnlineSummarizer extends Serializable {
     weightSquareSum *= w * w
   }
 
-  def copy(): UnivariateOnlineSummarizer = {
-    new UnivariateOnlineSummarizer().merge(this)
+  def copy(): WeightedStats = {
+    new WeightedStats().merge(this)
   }
 }

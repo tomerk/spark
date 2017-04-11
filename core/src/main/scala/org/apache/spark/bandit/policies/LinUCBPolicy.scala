@@ -19,6 +19,7 @@ package org.apache.spark.bandit.policies
 
 import breeze.linalg.{DenseMatrix, DenseVector}
 import breeze.numerics.sqrt
+import org.apache.spark.bandit.WeightedStats
 import org.apache.spark.util.StatCounter
 
 /**
@@ -42,13 +43,13 @@ private[spark] class LinUCBPolicy(numArms: Int, numFeatures: Int, alpha: Double)
   override protected def estimateRewards(features: DenseVector[Double],
                                          armFeaturesAcc: DenseMatrix[Double],
                                          armRewardsAcc: DenseVector[Double],
-                                         armRewardsStats: StatCounter): Double = {
+                                         armRewardsStats: WeightedStats): Double = {
     // TODO: Should be able to optimize code by only computing coefficientEstimate after
     // updates. Would require an update to ContextualBanditPolicy to apply optimization
     // to all contextual bandits.
-    if (armRewardsStats.count > 2) {
+    if (armRewardsStats.totalWeights >= 2) {
       val coefficientEstimate = armFeaturesAcc \ armRewardsAcc
-      coefficientEstimate.t * features + alpha * armRewardsStats.sampleStdev * sqrt(
+      coefficientEstimate.t * features + alpha * armRewardsStats.variance * sqrt(
         features.t * (armFeaturesAcc \ features)
       )
     } else {

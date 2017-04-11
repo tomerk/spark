@@ -55,7 +55,7 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     val endTime = System.nanoTime()
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
-    val reward = StatCounter(startTime - endTime)
+    val reward = new WeightedStats().add(startTime - endTime)
     banditManager.provideContextualFeedback(id, arm, features, reward)
     result
   }
@@ -68,7 +68,7 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     val endTime = System.nanoTime()
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
-    val reward = StatCounter(startTime - endTime)
+    val reward = new WeightedStats().add(startTime - endTime)
     banditManager.provideContextualFeedback(id, arm, features, reward)
     (result, Action(arm, startTime - endTime))
   }
@@ -85,13 +85,13 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     // Because our contextual models our linear, the features is just over the individal inputs
     val features = in.map(featureExtractor).reduce(_ + _)
     val arm = policy.chooseArm(features)
-    val rewards = StatCounter()
+    val rewards = new WeightedStats()
 
     val seqResult = in.map { x =>
       val startTime = System.nanoTime()
       val result = arms(arm).apply(x)
       val endTime = System.nanoTime()
-      rewards.merge(startTime - endTime)
+      rewards.add(startTime - endTime)
       result
     }
 
