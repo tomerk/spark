@@ -18,6 +18,7 @@
 package org.apache.spark.bandit
 
 import breeze.linalg.{DenseMatrix, DenseVector}
+import org.apache.spark.SparkConf
 import org.apache.spark.internal.Logging
 import org.apache.spark.rpc.{RpcCallContext, RpcEnv, ThreadSafeRpcEndpoint}
 import org.apache.spark.util.StatCounter
@@ -28,7 +29,8 @@ sealed trait BanditUpdate
 case class ContextualBanditUpdate(banditId: Long,
                                   features: Array[DenseMatrix[Double]],
                                   rewards: Array[DenseVector[Double]],
-                                  rewardStats: Array[WeightedStats]
+                                  rewardStats: Array[WeightedStats],
+                                  weights: Array[DenseVector[Double]]
                                  ) extends BanditUpdate
 case class MABBanditUpdate(banditId: Long,
                            rewards: Array[WeightedStats])
@@ -38,7 +40,7 @@ trait BanditManagerMessages
 case class SendLocalUpdates(executorId: String, updates: Seq[BanditUpdate])
 case class SendDistributedUpdates(updates: Seq[BanditUpdate])
 
-private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv)
+private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, conf: SparkConf)
   extends ThreadSafeRpcEndpoint with Logging {
 
   private val executorStates = mutable.Map[String,
