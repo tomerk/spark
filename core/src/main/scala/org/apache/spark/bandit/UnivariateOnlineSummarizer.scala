@@ -61,6 +61,36 @@ class UnivariateOnlineSummarizer extends Serializable {
    */
   def add(sample: Double): this.type = add(sample, 1.0)
 
+  private[spark] def addMultiple(value: Double, weight: Double, freq: Long): this.type = {
+    require(weight >= 0.0, s"sample weight, ${weight} has to be >= 0.0")
+    if (weight == 0.0) return this
+
+
+    if (value != 0.0) {
+      if (currMax < value) {
+        currMax = value
+      }
+      if (currMin > value) {
+        currMin = value
+      }
+
+      val prevMean = currMean
+      val diff = value - prevMean
+      currMean = prevMean + freq * weight * diff / (weightSum + freq * weight)
+      currM2n += weight * (value - currMean) * diff * freq
+      currM2 += weight * value * value * freq
+      currL1 += weight * math.abs(value) * freq
+
+      weightSum += weight * freq
+      nnz += freq
+    }
+
+    totalWeightSum += weight * freq
+    weightSquareSum += weight * weight * freq
+    totalCnt += freq
+    this
+  }
+
   private[spark] def add(value: Double, weight: Double): this.type = {
     require(weight >= 0.0, s"sample weight, ${weight} has to be >= 0.0")
     if (weight == 0.0) return this
@@ -229,6 +259,10 @@ class UnivariateOnlineSummarizer extends Serializable {
     currL1
   }
 
+  def totalWeights: Double = {
+    totalWeightSum
+  }
+
   /**
    * Scale all weight by a constant factor
    * @param w
@@ -245,7 +279,7 @@ class UnivariateOnlineSummarizer extends Serializable {
     weightSquareSum *= w * w
   }
 
-  override def clone(): UnivariateOnlineSummarizer = {
+  def copy(): UnivariateOnlineSummarizer = {
     new UnivariateOnlineSummarizer().merge(this)
   }
 }

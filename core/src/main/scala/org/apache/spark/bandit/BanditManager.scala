@@ -50,11 +50,13 @@ private[spark] class BanditManager(
 
   private var initialized = false
   private val policies = {
-    new ConcurrentHashMap[Long, (BanditPolicy, (Array[Long], Array[Double], Array[Double]))]()
+    new ConcurrentHashMap[Long, (BanditPolicy, Array[UnivariateOnlineSummarizer])]()
   }
   private val contextualPolicies = new ConcurrentHashMap[Long,
       (ContextualBanditPolicy, (
-        Array[DenseMatrix[Double]], Array[DenseVector[Double]], Array[StatCounter]))]()
+        Array[DenseMatrix[Double]],
+          Array[DenseVector[Double]],
+          Array[UnivariateOnlineSummarizer]))]()
   private val updatedBandits = mutable.Set[Long]()
 
   initialize()
@@ -97,15 +99,10 @@ private[spark] class BanditManager(
               val updates: Seq[BanditUpdate] = ids.map { id =>
                 if (policies.containsKey(id)) {
                   val (
-                    policy,
-                    (localPlays, localRewards, localRewardsSecMoment)
+                    policy, localRewards
                     ) = policies.get(id)
                   policy.stateLock.synchronized {
-                    MABBanditUpdate(
-                      id,
-                      localPlays.clone(),
-                      localRewards.clone(),
-                      localRewardsSecMoment.clone())
+                    MABBanditUpdate(id, localRewards.map(_.copy()))
                   }
                 } else {
                   val (policy, (localFeatures, localRewards, localRewardStats)) = {
@@ -115,7 +112,7 @@ private[spark] class BanditManager(
                     ContextualBanditUpdate(id,
                       localFeatures.clone(),
                       localRewards.clone(),
-                      localRewardStats)
+                      localRewardStats.map(_.copy()))
                   }
                 }
               }
@@ -128,8 +125,8 @@ private[spark] class BanditManager(
                     _.updates.foreach {
                       case ContextualBanditUpdate(id, features, rewards, rewardStats) =>
                         mergeDistributedContextualFeedback(id, features, rewards, rewardStats)
-                      case MABBanditUpdate(id, plays, rewards, rewardsSquared) =>
-                        mergeDistributedFeedback(id, plays, rewards, rewardsSquared)
+                      case MABBanditUpdate(id, rewards) =>
+                        mergeDistributedFeedback(id, rewards)
                     }
                   }
                 }(forwardMessageExecutionContext)
@@ -154,9 +151,7 @@ private[spark] class BanditManager(
 
   def registerOrLoadPolicy(id: Long, policy: BanditPolicy): BanditPolicy = {
     policies.putIfAbsent(id, (policy,
-      (Array.fill(policy.numArms)(0),
-        Array.fill(policy.numArms)(0),
-        Array.fill(policy.numArms)(0))))
+      Array.fill(policy.numArms)(new UnivariateOnlineSummarizer)))
     policies.get(id)._1
   }
 
@@ -169,8 +164,8 @@ private[spark] class BanditManager(
       DenseVector.zeros(policy.numFeatures)
     }
 
-    val initRewardStats: Array[StatCounter] = Array.fill(policy.numArms) {
-      StatCounter()
+    val initRewardStats: Array[UnivariateOnlineSummarizer] = Array.fill(policy.numArms) {
+      new UnivariateOnlineSummarizer()
     }
 
     contextualPolicies.putIfAbsent(id, (policy,
@@ -181,14 +176,11 @@ private[spark] class BanditManager(
   def provideFeedback(id: Long,
                       arm: Int,
                       plays: Long,
-                      reward: Double,
-                      rewardsSquared: Double): Unit = {
-    val (policy, (localPlays, localRewards, localRewardsSquared)) = policies.get(id)
+                      reward: Double): Unit = {
+    val (policy, localRewards) = policies.get(id)
     policy.stateLock.synchronized {
-      policy.provideFeedback(arm, plays, reward, rewardsSquared)
-      localPlays(arm) += plays
-      localRewards(arm) += reward
-      localRewardsSquared(arm) += rewardsSquared
+      policy.provideFeedback(arm, plays, reward)
+      localRewards(arm).addMultiple(reward, 1.0, plays)
     }
 
     updatedBandits.synchronized {
@@ -197,18 +189,15 @@ private[spark] class BanditManager(
   }
 
   def mergeDistributedFeedback(id: Long,
-                               plays: Array[Long],
-                               rewards: Array[Double],
-                               rewardsSquared: Array[Double]): Unit = {
-    val (policy, (localPlays, localRewards, localRewardsSquared)) = policies.get(id)
+                               rewards: Array[UnivariateOnlineSummarizer]
+                               ): Unit = {
+    val (policy, localRewards) = policies.get(id)
 
     policy.stateLock.synchronized {
       for (arm <- 0 until policy.numArms) {
-        val newPlays = localPlays(arm) + plays(arm)
-        val newRewards = localRewards(arm) + rewards(arm)
-        val newRewardsSquared = localRewardsSquared(arm) + rewardsSquared(arm)
+        val newRewards = localRewards(arm).merge(rewards(arm))
 
-        policy.setState(arm, newPlays, newRewards, newRewardsSquared)
+        policy.setState(arm, newRewards)
       }
     }
 
@@ -220,10 +209,11 @@ private[spark] class BanditManager(
   def provideContextualFeedback(id: Long,
                                 arm: Int,
                                 features: DenseVector[Double],
-                                rewardStats: StatCounter): Unit = {
+                                rewardStats: UnivariateOnlineSummarizer): Unit = {
     val (policy, (localFeatures, localRewards, localRewardStats)) = contextualPolicies.get(id)
+    // Note that this assumes all weights are 1
     val xxT = features * features.t
-    val rx = rewardStats.sum * features
+    val rx = rewardStats.count * rewardStats.mean * features
 
     policy.stateLock.synchronized {
       policy.provideFeedback(arm, xxT, rx, rewardStats)
@@ -240,7 +230,7 @@ private[spark] class BanditManager(
   def mergeDistributedContextualFeedback(id: Long,
                                          features: Array[DenseMatrix[Double]],
                                          rewards: Array[DenseVector[Double]],
-                                         rewardStats: Array[StatCounter]): Unit = {
+                                         rewardStats: Array[UnivariateOnlineSummarizer]): Unit = {
     logInfo(s"feedback: $id, ${features.toSeq} ${rewards.toSeq}")
 
     val (policy, (localFeatures, localRewards, localRewardStats)) = contextualPolicies.get(id)
