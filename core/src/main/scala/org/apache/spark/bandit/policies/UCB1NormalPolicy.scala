@@ -17,25 +17,20 @@
 
 package org.apache.spark.bandit.policies
 
-import breeze.stats.distributions.Gaussian
-import org.apache.commons.math3.distribution.TDistribution
-
 /**
- * Thompson Sampling with Gaussian priors (using sample variance).
- *
- * Modified from gaussian priorsthat have a variance of 1, from:
- * https://bandits.wikischolars.columbia.edu/file/view/Lecture+4.pdf
+ * UCB-Normal algorithm.
  *
  * @param numArms
  */
-private[spark] class GaussianThompsonSamplingPolicy(
-                                                     numArms: Int,
-                                                     varianceMultiplier: Double
-                                                   ) extends BanditPolicy(numArms) {
+private[spark] class UCB1NormalPolicy(
+                                           numArms: Int,
+                                           boundsConst: Double
+                                         ) extends BanditPolicy(numArms) {
   override protected def estimateRewards(playsToMake: Int,
                                          totalPlays: Array[Long],
                                          totalRewards: Array[Double],
                                          totalRewardsSquared: Array[Double]): Seq[Double] = {
+    val n = totalPlays.sum
     (0 until numArms).map { arm =>
       val numPlays = totalPlays(arm)
       if (numPlays > 2) {
@@ -45,17 +40,8 @@ private[spark] class GaussianThompsonSamplingPolicy(
           (totalRewards(arm) * totalRewards(arm)) / totalPlays(arm)
         val runningVariance = varNumerator / (numPlays - 1)
 
-        /*
-        math.abs(new TDistribution(numPlays - 1).sample()) *
-          math.sqrt(runningVariance / totalPlays(arm)) +
-          (totalRewards(arm) / (totalPlays(arm) + 1.0)
-        )
-         */
-        // Breeze expects sigma as the input to the gaussian, not the variance.
-        new Gaussian(
-          totalRewards(arm) / (totalPlays(arm) + 1.0),
-          math.sqrt(runningVariance / totalPlays(arm))
-        ).draw()
+        (totalRewards(arm) / totalPlays(arm)) +
+          boundsConst * math.sqrt(runningVariance/totalPlays(arm) * 16.0*math.log(n-1))
       } else {
         Double.PositiveInfinity
       }

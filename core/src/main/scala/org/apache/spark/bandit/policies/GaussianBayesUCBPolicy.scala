@@ -17,12 +17,14 @@
 
 package org.apache.spark.bandit.policies
 
+import org.apache.commons.math3.distribution.TDistribution
+
 /**
- * Like UCB-tuned, but without the min(1/4, std dev), just std dev.
+ * UCB-Normal algorithm.
  *
  * @param numArms
  */
-private[spark] class UCBPsuedoTunedPolicy(
+private[spark] class GaussianBayesUCBPolicy(
                                            numArms: Int,
                                            boundsConst: Double
                                          ) extends BanditPolicy(numArms) {
@@ -40,8 +42,10 @@ private[spark] class UCBPsuedoTunedPolicy(
           (totalRewards(arm) * totalRewards(arm)) / totalPlays(arm)
         val runningVariance = varNumerator / (numPlays - 1)
 
+        val tDistribution = new TDistribution(numPlays - 1)
+        val quantile = tDistribution.inverseCumulativeProbability(1.0 - (1.0/n))
         (totalRewards(arm) / totalPlays(arm)) +
-          boundsConst * math.sqrt(runningVariance * 2.0*math.log(n)/totalPlays(arm))
+          boundsConst * math.sqrt(runningVariance/totalPlays(arm) * quantile)
       } else {
         Double.PositiveInfinity
       }

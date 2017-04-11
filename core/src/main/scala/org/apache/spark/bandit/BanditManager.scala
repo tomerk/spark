@@ -278,8 +278,10 @@ private[spark] class BanditManager(
         new GaussianThompsonSamplingPolicy(numArms = arms.length, varianceMultiplier = multiplier)
       case UCB1PolicyParams(range) =>
         new UCB1Policy(numArms = arms.length, boundsConst = range)
-      case UCBPseudoTunedPolicyParams(range) =>
-        new UCB1Policy(numArms = arms.length, boundsConst = range)
+      case UCB1NormalPolicyParams(range) =>
+        new UCB1NormalPolicy(numArms = arms.length, boundsConst = range)
+      case GaussianBayesUCBPolicyParams(range) =>
+        new GaussianBayesUCBPolicy(numArms = arms.length, boundsConst = range)
     }
 
     val id = nextBanditId.getAndIncrement()
