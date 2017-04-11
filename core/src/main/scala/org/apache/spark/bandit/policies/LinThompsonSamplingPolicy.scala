@@ -20,6 +20,7 @@ package org.apache.spark.bandit.policies
 import breeze.linalg.{DenseMatrix, DenseVector, cholesky, diag, eigSym, inv, max, sum}
 import breeze.numerics.log
 import breeze.stats.distributions._
+import org.apache.spark.bandit.WeightedStats
 import org.apache.spark.util.StatCounter
 
 import scala.math.log1p
@@ -51,17 +52,17 @@ private[spark] class LinThompsonSamplingPolicy(numArms: Int,
   override protected def estimateRewards(features: DenseVector[Double],
                                          armFeaturesAcc: DenseMatrix[Double],
                                          armRewardsAcc: DenseVector[Double],
-                                         armRewardsStats: StatCounter): Double = {
+                                         armRewardsStats: WeightedStats): Double = {
     // TODO: Should be able to optimize code by only computing coefficientMean after
     // updates. Would require an update to ContextualBanditPolicy to apply optimization
     // to all contextual bandits.
-    if (armRewardsStats.count > 2) {
+    if (armRewardsStats.totalWeights >= 2) {
 
       val coefficientMean = armFeaturesAcc \ armRewardsAcc
       val coefficientDist = InverseCovarianceMultivariateGaussian(
         coefficientMean,
         // We divide because this is the inverse covariance
-        armFeaturesAcc / (v * armRewardsStats.sampleVariance),
+        armFeaturesAcc / (v * armRewardsStats.variance),
         useCholesky = useCholesky)
       val coefficientSample = coefficientDist.draw()
 

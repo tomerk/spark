@@ -17,6 +17,8 @@
 
 package org.apache.spark.bandit.policies
 
+import org.apache.spark.bandit.WeightedStats
+
 /**
  * Epsilon-greedy
  *
@@ -34,12 +36,10 @@ private[spark] class EpsilonGreedyPolicy(numArms: Int, epsilon: Double)
   }
 
   override protected def estimateRewards(playsToMake: Int,
-                                         totalPlays: Array[Long],
-                                         totalRewards: Array[Double],
-                                         totalRewardsSquared: Array[Double]): Seq[Double] = {
+                                         totalRewards: Array[WeightedStats]): Seq[Double] = {
     (0 until numArms).map { arm =>
-      if (totalPlays(arm) > 0) {
-        totalRewards(arm) / totalPlays(arm)
+      if (totalRewards(arm).count > 0) {
+        totalRewards(arm).mean
       } else {
         Double.PositiveInfinity
       }

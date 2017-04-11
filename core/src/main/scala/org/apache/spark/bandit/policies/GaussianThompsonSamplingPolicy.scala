@@ -19,6 +19,7 @@ package org.apache.spark.bandit.policies
 
 import breeze.stats.distributions.Gaussian
 import org.apache.commons.math3.distribution.TDistribution
+import org.apache.spark.bandit.WeightedStats
 
 /**
  * Thompson Sampling with Gaussian priors (using sample variance).
@@ -33,17 +34,11 @@ private[spark] class GaussianThompsonSamplingPolicy(
                                                      varianceMultiplier: Double
                                                    ) extends BanditPolicy(numArms) {
   override protected def estimateRewards(playsToMake: Int,
-                                         totalPlays: Array[Long],
-                                         totalRewards: Array[Double],
-                                         totalRewardsSquared: Array[Double]): Seq[Double] = {
+                                         totalRewards: Array[WeightedStats]): Seq[Double] = {
     (0 until numArms).map { arm =>
-      val numPlays = totalPlays(arm)
+      val numPlays = totalRewards(arm).totalWeights
       if (numPlays > 2) {
-        // Variance Computed using naive algorithm from:
-        // https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
-        val varNumerator = totalRewardsSquared(arm) -
-          (totalRewards(arm) * totalRewards(arm)) / totalPlays(arm)
-        val runningVariance = varNumerator / (numPlays - 1)
+        val runningVariance = totalRewards(arm).variance
 
         /*
         math.abs(new TDistribution(numPlays - 1).sample()) *
@@ -53,8 +48,8 @@ private[spark] class GaussianThompsonSamplingPolicy(
          */
         // Breeze expects sigma as the input to the gaussian, not the variance.
         new Gaussian(
-          totalRewards(arm) / (totalPlays(arm) + 1.0),
-          math.sqrt(runningVariance / totalPlays(arm))
+          totalRewards(arm).mean,
+          math.sqrt(runningVariance / numPlays)
         ).draw()
       } else {
         Double.PositiveInfinity
