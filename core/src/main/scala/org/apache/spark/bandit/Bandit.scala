@@ -56,7 +56,7 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
     val reward: Double = startTime - endTime
-    banditManager.provideFeedback(id, arm, 1, reward, reward * reward)
+    banditManager.provideFeedback(id, arm, 1, reward)
     result
   }
 
@@ -69,7 +69,7 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
     val reward: Double = startTime - endTime
 
-    banditManager.provideFeedback(id, arm, 1, reward, reward * reward)
+    banditManager.provideFeedback(id, arm, 1, reward)
     (result, Action(arm, startTime - endTime))
   }
 
@@ -90,7 +90,7 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
     val reward: Double = startTime - endTime
 
-    banditManager.provideFeedback(id, arm, in.length, reward, reward * reward / in.length)
+    banditManager.provideFeedback(id, arm, in.length, reward / in.length)
     result
   }
 

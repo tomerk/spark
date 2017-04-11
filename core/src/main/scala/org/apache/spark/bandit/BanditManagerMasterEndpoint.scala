@@ -28,12 +28,10 @@ sealed trait BanditUpdate
 case class ContextualBanditUpdate(banditId: Long,
                                   features: Array[DenseMatrix[Double]],
                                   rewards: Array[DenseVector[Double]],
-                                  rewardStats: Array[StatCounter]
+                                  rewardStats: Array[UnivariateOnlineSummarizer]
                                  ) extends BanditUpdate
 case class MABBanditUpdate(banditId: Long,
-                           plays: Array[Long],
-                           rewards: Array[Double],
-                           rewardsSecondMoment: Array[Double])
+                           rewards: Array[UnivariateOnlineSummarizer])
   extends BanditUpdate
 
 trait BanditManagerMessages

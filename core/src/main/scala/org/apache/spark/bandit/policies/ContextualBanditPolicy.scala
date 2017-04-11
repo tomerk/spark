@@ -20,6 +20,7 @@ package org.apache.spark.bandit.policies
 import java.io.ObjectOutputStream
 
 import breeze.linalg.{DenseMatrix, DenseVector}
+import org.apache.spark.bandit.UnivariateOnlineSummarizer
 import org.apache.spark.util.StatCounter
 
 sealed trait ContextualBanditPolicyParams
@@ -40,8 +41,8 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
   val rewardAccumulator: Array[DenseVector[Double]] = {
     Array.fill(numArms)(DenseVector.zeros(numFeatures))
   }
-  val rewardStatsAccumulator: Array[StatCounter] = {
-    Array.fill(numArms)(StatCounter())
+  val rewardStatsAccumulator: Array[UnivariateOnlineSummarizer] = {
+    Array.fill(numArms)(new UnivariateOnlineSummarizer())
   }
 
   def chooseArm(features: DenseVector[Double]): Int = {
@@ -63,13 +64,14 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
   protected def estimateRewards(features: DenseVector[Double],
                                 armFeaturesAcc: DenseMatrix[Double],
                                 armRewardsAcc: DenseVector[Double],
-                                rewardStatsAcc: StatCounter): Double
+                                rewardStatsAcc: UnivariateOnlineSummarizer): Double
 
   def provideFeedback(arm: Int,
                       features: DenseVector[Double],
-                      rewardStats: StatCounter): Unit = {
+                      rewardStats: UnivariateOnlineSummarizer): Unit = {
+    // Note that this assumes all weights are 1
     val xxT = features * features.t
-    val rx = rewardStats.sum * features
+    val rx = rewardStats.count * rewardStats.mean * features
 
     provideFeedback(arm, xxT, rx, rewardStats)
   }
@@ -77,7 +79,7 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
   def provideFeedback(arm: Int,
                       features: DenseMatrix[Double],
                       rewardVec: DenseVector[Double],
-                      rewardStats: StatCounter): Unit = {
+                      rewardStats: UnivariateOnlineSummarizer): Unit = {
     stateLock.synchronized {
       // Not an in-place update for the matrices, leaves them valid when used elsewhere!
       featuresAccumulator(arm) = featuresAccumulator(arm) + features
@@ -88,7 +90,7 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
 
   def setState(features: Array[DenseMatrix[Double]],
                rewards: Array[DenseVector[Double]],
-               rewardStats: Array[StatCounter]): Unit = {
+               rewardStats: Array[UnivariateOnlineSummarizer]): Unit = {
     for (arm <- 0 until numArms) stateLock.synchronized {
       setState(arm, features(arm), rewards(arm), rewardStats(arm))
     }
@@ -97,7 +99,7 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
   def setState(arm: Int,
                features: DenseMatrix[Double],
                rewards: DenseVector[Double],
-               rewardStats: StatCounter): Unit = {
+               rewardStats: UnivariateOnlineSummarizer): Unit = {
     stateLock.synchronized {
       featuresAccumulator(arm) = features
       rewardAccumulator(arm) = rewards

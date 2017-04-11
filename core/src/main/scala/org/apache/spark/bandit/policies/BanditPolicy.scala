@@ -19,6 +19,7 @@ package org.apache.spark.bandit.policies
 
 import java.io.ObjectOutputStream
 
+import org.apache.spark.bandit.UnivariateOnlineSummarizer
 import org.apache.spark.internal.Logging
 
 sealed trait BanditPolicyParams
@@ -33,53 +34,43 @@ case class GaussianThompsonSamplingPolicyParams(
 
 abstract class BanditPolicy(val numArms: Int) extends Logging with Serializable {
   @transient lazy private[spark] val stateLock = this
-  private val totalPlays: Array[Long] = Array.fill(numArms)(0L)
-  private val totalRewards: Array[Double] = Array.fill(numArms)(0.0)
-  private val totalRewardsSecondMoment: Array[Double] = Array.fill(numArms)(0.0)
+  private val rewards: Array[UnivariateOnlineSummarizer] =
+    Array.fill(numArms)(new UnivariateOnlineSummarizer())
 
   def chooseArm(plays: Int): Int = {
-    val rewards = estimateRewards(plays)
-    val maxReward = rewards.max
-    val bestArms = rewards.zipWithIndex.filter(_._1 == maxReward)
+    val rewardEstimates = estimateRewards(plays)
+    val maxReward = rewardEstimates.max
+    val bestArms = rewardEstimates.zipWithIndex.filter(_._1 == maxReward)
 
     bestArms(scala.util.Random.nextInt(bestArms.length))._2
   }
 
   private def estimateRewards(plays: Int): Seq[Double] = {
-    val (playsCopy, rewardsCopy, rewardsSecondMomentCopy) = stateLock.synchronized {
-      (totalPlays.clone(), totalRewards.clone(), totalRewardsSecondMoment.clone())
+    val rewardsCopy = stateLock.synchronized {
+      rewards.map(_.copy())
     }
 
-    estimateRewards(plays, playsCopy, rewardsCopy, rewardsSecondMomentCopy)
+    estimateRewards(plays, rewardsCopy)
   }
 
   protected def estimateRewards(playsToMake: Int,
-                                totalPlays: Array[Long],
-                                totalRewards: Array[Double],
-                                totalRewardsSquared: Array[Double]): Seq[Double]
+                                observedRewards: Array[UnivariateOnlineSummarizer]): Seq[Double]
 
   def provideFeedback(arm: Int,
                       plays: Long,
-                      reward: Double,
-                      rewardsSquared: Double): Unit = stateLock.synchronized {
-    totalPlays(arm) += plays
-    totalRewards(arm) += reward
-    totalRewardsSecondMoment(arm) += rewardsSquared
+                      reward: Double): Unit = stateLock.synchronized {
+    rewards(arm).addMultiple(reward, 1.0, plays)
   }
 
-  def setState(plays: Array[Long],
-               rewards: Array[Double],
-               rewardsSecondMoment: Array[Double]): Unit = stateLock.synchronized {
+  def setState(newRewards: Array[UnivariateOnlineSummarizer]): Unit = stateLock.synchronized {
     for (i <- 0 until numArms) {
-      setState(i, plays(i), rewards(i), rewardsSecondMoment(i))
+      setState(i, newRewards(i))
     }
   }
 
-  def setState(arm: Int, plays: Long, rewards: Double, rewardsSecondMoment: Double): Unit =
+  def setState(arm: Int, rewardObservations: UnivariateOnlineSummarizer): Unit =
     stateLock.synchronized {
-      totalPlays(arm) = plays
-      totalRewards(arm) = rewards
-      totalRewardsSecondMoment(arm) = rewardsSecondMoment
+      rewards(arm) = rewardObservations
   }
 
   /**
