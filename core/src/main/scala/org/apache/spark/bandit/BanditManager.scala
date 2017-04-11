@@ -108,12 +108,23 @@ private[spark] class BanditManager(
                   val (policy, (localFeatures, localRewards, localRewardStats)) = {
                     contextualPolicies.get(id)
                   }
-                  policy.stateLock.synchronized {
-                    ContextualBanditUpdate(id,
+                  val (f, r, rs) = policy.stateLock.synchronized {
+                    (
                       localFeatures.clone(),
                       localRewards.clone(),
                       localRewardStats.map(_.copy()))
                   }
+                  val weights = Array.fill[DenseVector[Double]](f.length)(null)
+                  var i = 0
+                  while (i < f.length) {
+                    weights(i) = f(i) \ r(i)
+                    i += 1
+                  }
+                  ContextualBanditUpdate(id,
+                    f,
+                    r,
+                    rs,
+                  weights = weights)
                 }
               }
 
@@ -123,7 +134,7 @@ private[spark] class BanditManager(
                 ).onComplete {
                   _.foreach {
                     _.updates.foreach {
-                      case ContextualBanditUpdate(id, features, rewards, rewardStats) =>
+                      case ContextualBanditUpdate(id, features, rewards, rewardStats, _) =>
                         mergeDistributedContextualFeedback(id, features, rewards, rewardStats)
                       case MABBanditUpdate(id, rewards) =>
                         mergeDistributedFeedback(id, rewards)

@@ -308,7 +308,7 @@ object SparkEnv extends Logging {
       conf,
       registerOrLookupEndpoint(
         BanditManagerMaster.DRIVER_ENDPOINT_NAME,
-        new BanditManagerMasterEndpoint(rpcEnv)),
+        new BanditManagerMasterEndpoint(rpcEnv, conf)),
       securityManager)
 
     val mapOutputTracker = if (isDriver) {
