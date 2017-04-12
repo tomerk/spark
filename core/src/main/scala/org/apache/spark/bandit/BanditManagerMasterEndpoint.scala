@@ -17,7 +17,7 @@
 
 package org.apache.spark.bandit
 
-import breeze.linalg.{DenseMatrix, DenseVector}
+import breeze.linalg.{DenseMatrix, DenseVector, norm}
 import org.apache.spark.SparkConf
 import org.apache.spark.internal.Logging
 import org.apache.spark.rpc.{RpcCallContext, RpcEnv, ThreadSafeRpcEndpoint}
@@ -43,84 +43,126 @@ case class SendDistributedUpdates(updates: Seq[BanditUpdate])
 private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, conf: SparkConf)
   extends ThreadSafeRpcEndpoint with Logging {
 
+  private val banditClusterConstant: Double = {
+    conf.getDouble("spark.bandits.clusterCoefficient", 0.25)
+  }
+
   private val executorStates = mutable.Map[String,
-    mutable.Map[Long, (Array[Long], Array[Double], Array[Double])]]()
+    mutable.Map[Long, Array[WeightedStats]]]()
   private val executorContextualStates = mutable.Map[String,
     mutable.Map[Long, (Array[DenseMatrix[Double]], Array[DenseVector[Double]],
-      Array[StatCounter])]]()
-
-  private val states = mutable.Map[Long, (Array[Long], Array[Double], Array[Double])]()
-  private val contextualStates = mutable.Map[Long,
-    (Array[DenseMatrix[Double]], Array[DenseVector[Double]], Array[StatCounter])]()
-
+      Array[WeightedStats], Array[DenseVector[Double]])]]()
 
   override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
     case SendLocalUpdates(executorId, localUpdates) =>
       val responses = localUpdates.map {
-        case MABBanditUpdate(id, plays, rewards, rewardsSquared) =>
-          val arms = plays.length
+        case MABBanditUpdate(id, rewards) =>
+          // Store these observations
           val executorState = executorStates.getOrElseUpdate(executorId, mutable.Map())
-          val oldLocalState = executorState.getOrElse(id,
-            (Array.fill(arms)(0L), Array.fill(arms)(0.0), Array.fill(arms)(0.0)))
+          executorState.put(id, rewards)
 
-          val globalState = states.getOrElseUpdate(id,
-            (Array.fill(arms)(0L), Array.fill(arms)(0.0), Array.fill(arms)(0.0)))
+          // Cluster observations from other partitions that could share the same reward
+          // distribution, in order to merge w/ the local partition data
+          val arms = rewards.length
+          val responseRewards = Array.fill(arms)(new WeightedStats())
+          val executors = executorStates.keySet.filterNot(_ == executorId)
+          for (executor <- executors) {
+            val otherState = executorStates.get(executor).flatMap(_.get(id))
+            otherState match {
+              case Some(otherRewards) =>
+                for (i <- 0 until arms) {
+                  // Identify whether to cluster from the arm observations
+                  val meanDiff = math.abs(rewards(i).mean - otherRewards(i).mean)
 
-          for (i <- 0 until arms) {
-            globalState._1(i) -= oldLocalState._1(i)
-            globalState._2(i) -= oldLocalState._2(i)
-            globalState._3(i) -= oldLocalState._3(i)
+                  // confidence bound for the other reward
+                  val otherCb = {
+                    banditClusterConstant * math.sqrt(
+                      otherRewards(i).variance *
+                        (1 + math.log(1 + otherRewards(i).totalWeights)) /
+                        (1 + otherRewards(i).totalWeights)
+                    )
+                  }
+
+                  // confidence bound for this reward
+                  val cb = {
+                    banditClusterConstant * math.sqrt(
+                      rewards(i).variance *
+                        (1 + math.log(1 + rewards(i).totalWeights)) /
+                        (1 + rewards(i).totalWeights)
+                    )
+                  }
+
+                  // Cluster these observations if the difference is within
+                  // the confidence bounds
+                  if (meanDiff < cb + otherCb) {
+                    responseRewards(i).merge(otherRewards(i))
+                  }
+                }
+              case None => Unit
+            }
           }
 
-          val responseUpdate = MABBanditUpdate(id,
-            globalState._1.clone(),
-            globalState._2.clone(),
-            globalState._3.clone())
+          // Return the observations to use from the clustered partitions
+          MABBanditUpdate(id, responseRewards)
 
-          for (i <- 0 until arms) {
-            globalState._1(i) += plays(i)
-            globalState._2(i) += rewards(i)
-            globalState._3(i) += rewardsSquared(i)
-          }
+        case ContextualBanditUpdate(id, features, rewards, rewardStats, weights) =>
+          // Store these observations
+          val executorState = executorContextualStates.getOrElseUpdate(executorId, mutable.Map())
+          executorState.put(id, (features, rewards, rewardStats, weights))
 
-          executorState.put(id, (plays, rewards, rewardsSquared))
-          responseUpdate
-
-        case ContextualBanditUpdate(id, features, rewards, rewardStats) =>
+          // Cluster observations from other partitions that could share the same reward
+          // distribution, in order to merge w/ the local partition data
           val arms = rewards.length
           val numFeatures = features.head.rows
+          val responseObservations = (
+            Array.fill(arms)(DenseMatrix.zeros[Double](numFeatures, numFeatures)),
+            Array.fill(arms)(DenseVector.zeros[Double](numFeatures)),
+            Array.fill(arms)(new WeightedStats()))
 
-          val executorState = executorContextualStates.getOrElseUpdate(executorId, mutable.Map())
-          val oldLocalState = executorState.getOrElse(id,
-            (Array.fill(arms)(DenseMatrix.zeros[Double](numFeatures, numFeatures)),
-              Array.fill(arms)(DenseVector.zeros[Double](numFeatures)),
-            Array.fill(arms)(StatCounter())))
+          val executors = executorContextualStates.keySet.filterNot(_ == executorId)
+          for (executor <- executors) {
+            val otherState = executorContextualStates.get(executor).flatMap(_.get(id))
+            otherState match {
+              case Some((otherFeatures, otherRewards, otherRewardStats, otherWeights)) =>
+                for (i <- 0 until arms) {
+                  // Identify whether to cluster from the arm observations
+                  // TODO: It's probably possible to get a divide by zero error here?
+                  val meanOfNorms = (norm(weights(i)) + norm(otherWeights(i))) / 2.0
+                  val meanDiff = norm(weights(i) - otherWeights(i)) / meanOfNorms
 
-          val globalState = contextualStates.getOrElseUpdate(id,
-            (Array.fill(arms)(DenseMatrix.zeros[Double](numFeatures, numFeatures)),
-              Array.fill(arms)(DenseVector.zeros[Double](numFeatures)),
-            Array.fill(arms)(StatCounter())))
+                  // confidence bound for the other reward
+                  val otherCb = {
+                    banditClusterConstant * math.sqrt(
+                        (1 + math.log(1 + otherRewardStats(i).totalWeights)) /
+                        (1 + otherRewardStats(i).totalWeights)
+                    )
+                  }
 
-          for (i <- 0 until arms) {
-            globalState._1(i) = globalState._1(i) - oldLocalState._1(i)
-            globalState._2(i) = globalState._2(i) - oldLocalState._2(i)
-            globalState._3(i) = globalState._3(i).psuedoRemove(oldLocalState._3(i))
+                  // confidence bound for this reward
+                  val cb = {
+                    banditClusterConstant * math.sqrt(
+                      (1 + math.log(1 + rewardStats(i).totalWeights)) /
+                        (1 + rewardStats(i).totalWeights)
+                    )
+                  }
+
+                  // Cluster these observations if the difference is within
+                  // the confidence bounds
+                  if (meanDiff < cb + otherCb) {
+                    responseObservations._1(i) = responseObservations._1(i) + otherFeatures(i)
+                    responseObservations._2(i) = responseObservations._2(i) + otherRewards(i)
+                    responseObservations._3(i).merge(otherRewardStats(i))
+                  }
+                }
+              case None => Unit
+            }
           }
 
-          val responseUpdate = ContextualBanditUpdate(id,
-            globalState._1.clone(),
-            globalState._2.clone(),
-            globalState._3.clone())
-
-          for (i <- 0 until arms) {
-            globalState._1(i) = globalState._1(i) + features(i)
-            globalState._2(i) = globalState._2(i) + rewards(i)
-            globalState._3(i).merge(rewardStats(i))
-          }
-
-          executorState.put(id, (features, rewards, rewardStats))
-          responseUpdate
-
+          // Return the observations to use from the clustered partitions
+          ContextualBanditUpdate(id,
+            responseObservations._1,
+            responseObservations._2,
+            responseObservations._3, weights)
       }
 
       context.reply(SendDistributedUpdates(responses))

@@ -87,7 +87,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
 
       logInfo(s"$i: $arm")
       val reward = (rewardDist.draw() - (if (arm == bestArm) 10 else 11.5)) * 1e-10
-      policy.provideFeedback(arm, featureVec, StatCounter(reward))
+      policy.provideFeedback(arm, featureVec, new WeightedStats().add(reward))
       i += 1
     }
     val end = System.currentTimeMillis()
@@ -142,7 +142,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
 
       logInfo(s"$i: $arm")
       val reward = (rewardDist.draw() - (if (arm == bestArm) 10 else 10.2))*0.001
-      policy.provideFeedback(arm, 1, reward, reward*reward)
+      policy.provideFeedback(arm, 1, reward)
       i += 1
     }
     val end = System.currentTimeMillis()
