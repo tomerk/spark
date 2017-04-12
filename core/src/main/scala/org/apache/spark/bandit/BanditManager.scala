@@ -206,7 +206,7 @@ private[spark] class BanditManager(
 
     policy.stateLock.synchronized {
       for (arm <- 0 until policy.numArms) {
-        val newRewards = localRewards(arm).merge(rewards(arm))
+        val newRewards = localRewards(arm).copy().merge(rewards(arm))
 
         policy.setState(arm, newRewards)
       }
