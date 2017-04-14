@@ -36,10 +36,6 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
                                                 ) extends BanditTrait[A, B] with Logging {
 
   @transient private lazy val banditManager = SparkEnv.get.banditManager
-  @transient private lazy val policy = {
-    initPolicy = banditManager.registerOrLoadPolicy(id, initPolicy)
-    initPolicy
-  }
 
   /**
    * Given a single input, choose a single arm to apply to that input, and
@@ -48,6 +44,9 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
    * @param in The input item
    */
   def apply(in: A): B = {
+    val threadId = java.lang.Thread.currentThread().getId
+    val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
+
     val features = featureExtractor(in)
     val arm = policy.chooseArm(features)
     val startTime = System.nanoTime()
@@ -56,11 +55,14 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
     val reward = new WeightedStats().add(startTime - endTime)
-    banditManager.provideContextualFeedback(id, arm, features, reward)
+    banditManager.provideContextualFeedback(id, threadId, arm, features, reward)
     result
   }
 
   def applyAndOutputReward(in: A): (B, Action) = {
+    val threadId = java.lang.Thread.currentThread().getId
+    val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
+
     val features = featureExtractor(in)
     val arm = policy.chooseArm(features)
     val startTime = System.nanoTime()
@@ -69,7 +71,7 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
     val reward = new WeightedStats().add(startTime - endTime)
-    banditManager.provideContextualFeedback(id, arm, features, reward)
+    banditManager.provideContextualFeedback(id, threadId, arm, features, reward)
     (result, Action(arm, startTime - endTime))
   }
 
@@ -82,6 +84,9 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
    * @param in The vector of input
    */
   def vectorizedApply(in: Seq[A]): Seq[B] = {
+    val threadId = java.lang.Thread.currentThread().getId
+    val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
+
     // Because our contextual models our linear, the features is just over the individal inputs
     val features = in.map(featureExtractor).reduce(_ + _)
     val arm = policy.chooseArm(features)
@@ -96,7 +101,7 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     }
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
-    banditManager.provideContextualFeedback(id, arm, features, rewards)
+    banditManager.provideContextualFeedback(id, threadId, arm, features, rewards)
     seqResult
   }
 
