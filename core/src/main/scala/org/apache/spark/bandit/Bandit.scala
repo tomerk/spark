@@ -37,10 +37,6 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
                                                       ) extends BanditTrait[A, B] with Logging {
 
   @transient private lazy val banditManager = SparkEnv.get.banditManager
-  @transient private lazy val policy = {
-    initPolicy = banditManager.registerOrLoadPolicy(id, initPolicy)
-    initPolicy
-  }
 
   /**
    * Given a single input, choose a single arm to apply to that input, and
@@ -49,6 +45,8 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
    * @param in The input item
    */
   def apply(in: A): B = {
+    val threadId = java.lang.Thread.currentThread().getId
+    val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
     val arm = policy.chooseArm(1)
     val startTime = System.nanoTime()
     val result = arms(arm).apply(in)
@@ -56,11 +54,14 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
     val reward: Double = startTime - endTime
-    banditManager.provideFeedback(id, arm, 1, reward)
+    banditManager.provideFeedback(id, threadId, arm, 1, reward)
     result
   }
 
   def applyAndOutputReward(in: A): (B, Action) = {
+    val threadId = java.lang.Thread.currentThread().getId
+    val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
+
     val arm = policy.chooseArm(1)
     val startTime = System.nanoTime()
     val result = arms(arm).apply(in)
@@ -69,7 +70,7 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
     val reward: Double = startTime - endTime
 
-    banditManager.provideFeedback(id, arm, 1, reward)
+    banditManager.provideFeedback(id, threadId, arm, 1, reward)
     (result, Action(arm, startTime - endTime))
   }
 
@@ -82,6 +83,9 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
    * @param in The vector of input
    */
   def vectorizedApply(in: Seq[A]): Seq[B] = {
+    val threadId = java.lang.Thread.currentThread().getId
+    val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
+
     val arm = policy.chooseArm(in.length)
     val startTime = System.nanoTime()
     val result = in.map(arms(arm))
@@ -90,7 +94,7 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
     val reward: Double = startTime - endTime
 
-    banditManager.provideFeedback(id, arm, in.length, reward / in.length)
+    banditManager.provideFeedback(id, threadId, arm, in.length, reward / in.length)
     result
   }
 
