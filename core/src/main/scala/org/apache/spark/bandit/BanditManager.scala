@@ -95,6 +95,9 @@ private[spark] class BanditManager(
 
         val driftDetectRate = conf.getTimeAsMs("spark.bandits.driftDetectionRate", "5s")
         val driftDetectConstant = conf.getDouble("spark.bandits.driftCoefficient", 0.25)
+        // Probably shouldn't set to less than 2 otherwise errors can occur & variance can
+        // get screwy.
+        val minDriftExamples = conf.getInt("spark.bandits.minDriftExamples", 2)
         if (driftDetectRate > 0) {
           banditDriftDetectTask = eventLoopThread.scheduleAtFixedRate(new Runnable {
             override def run(): Unit = Utils.tryLogNonFatalError {
@@ -114,37 +117,43 @@ private[spark] class BanditManager(
                   val arms = policy.numArms
                   for (i <- 0 until arms) {
                     policy.stateLock.synchronized {
-                      // Identify whether drifting occurred
-                      val meanDiff = math.abs(recentRewards(i).mean - oldRewards(i).mean)
+                      if (recentRewards(i).totalWeights >= minDriftExamples) {
+                        if (oldRewards(i).totalWeights >= minDriftExamples) {
+                          // Identify whether drifting occurred
+                          val meanDiff = math.abs(recentRewards(i).mean - oldRewards(i).mean)
 
-                      // confidence bound for the old rewards
-                      val oldCb = {
-                        driftDetectConstant * math.sqrt(
-                          oldRewards(i).variance *
-                            (1 + math.log(1 + oldRewards(i).totalWeights)) /
-                            (1 + oldRewards(i).totalWeights)
-                        )
+                          // confidence bound for the old rewards
+                          val oldCb = {
+                            driftDetectConstant * math.sqrt(
+                              oldRewards(i).variance *
+                                (1 + math.log(1 + oldRewards(i).totalWeights)) /
+                                (1 + oldRewards(i).totalWeights)
+                            )
+                          }
+
+                          // confidence bound for recent rewards
+                          val cb = {
+                            driftDetectConstant * math.sqrt(
+                              recentRewards(i).variance *
+                                (1 + math.log(1 + recentRewards(i).totalWeights)) /
+                                (1 + recentRewards(i).totalWeights)
+                            )
+                          }
+
+                          // If drifting was detected, reset our knowledge.
+                          // Otherwise move the recent observations to the old ones
+                          if (meanDiff > cb + oldCb) {
+                            oldRewards(i) = recentRewards(i)
+                          } else {
+                            oldRewards(i).merge(recentRewards(i))
+                          }
+                        } else {
+                          oldRewards(i) = recentRewards(i)
+                        }
+
+                        // Then reset the recent observations tracker
+                        recentRewards(i) = new WeightedStats()
                       }
-
-                      // confidence bound for recent rewards
-                      val cb = {
-                        driftDetectConstant * math.sqrt(
-                          recentRewards(i).variance *
-                            (1 + math.log(1 + recentRewards(i).totalWeights)) /
-                            (1 + recentRewards(i).totalWeights)
-                        )
-                      }
-
-                      // If drifting was detected, reset our knowledge.
-                      // Otherwise move the recent observations to the old ones
-                      if (meanDiff > cb + oldCb) {
-                        oldRewards(i) = recentRewards(i)
-                      } else {
-                        oldRewards(i).merge(recentRewards(i))
-                      }
-
-                      // Then reset the recent observations tracker
-                      recentRewards(i) = new WeightedStats()
                     }
                   }
                 } else {
@@ -157,46 +166,55 @@ private[spark] class BanditManager(
                   val arms = policy.numArms
                   for (i <- 0 until arms) {
                     policy.stateLock.synchronized {
-                      val numFeatures = recentFeatures(i).rows
-                      val eye = DenseMatrix.eye[Double](numFeatures)
-                      val recentWeights = (recentFeatures(i) + eye) \ recentRewards(i)
-                      val oldWeights = (oldFeatures(i) + eye) \ oldRewards(i)
+                      if (recentRewardStats(i).totalWeights >= minDriftExamples) {
+                        val numFeatures = recentFeatures(i).rows
 
-                      val meanOfNorms = (norm(recentWeights(i)) + norm(oldWeights(i))) / 2.0
-                      val meanDiff = norm(recentWeights(i) - oldWeights(i)) / meanOfNorms
+                        if (oldRewardStats(i).totalWeights >= minDriftExamples) {
+                          val eye = DenseMatrix.eye[Double](numFeatures)
+                          val recentWeights = (recentFeatures(i) + eye) \ recentRewards(i)
+                          val oldWeights = (oldFeatures(i) + eye) \ oldRewards(i)
 
-                      // confidence bound for the other reward
-                      val otherCb = {
-                        driftDetectConstant * math.sqrt(
-                          (1 + math.log(1 + oldRewardStats(i).totalWeights)) /
-                            (1 + oldRewardStats(i).totalWeights)
-                        )
+                          val meanOfNorms = (norm(recentWeights) + norm(oldWeights)) / 2.0
+                          val meanDiff = norm(recentWeights - oldWeights) / meanOfNorms
+
+                          // confidence bound for the other reward
+                          val otherCb = {
+                            driftDetectConstant * math.sqrt(
+                              (1 + math.log(1 + oldRewardStats(i).totalWeights)) /
+                                (1 + oldRewardStats(i).totalWeights)
+                            )
+                          }
+
+                          // confidence bound for this reward
+                          val cb = {
+                            driftDetectConstant * math.sqrt(
+                              (1 + math.log(1 + recentRewardStats(i).totalWeights)) /
+                                (1 + recentRewardStats(i).totalWeights)
+                            )
+                          }
+
+                          // If drifting was detected, reset our knowledge.
+                          // Otherwise move the recent observations to the old ones
+                          if (meanDiff > cb + otherCb) {
+                            oldFeatures(i) = recentFeatures(i)
+                            oldRewards(i) = recentRewards(i)
+                            oldRewardStats(i) = recentRewardStats(i)
+                          } else {
+                            oldFeatures(i) = recentFeatures(i) + oldFeatures(i)
+                            oldRewards(i) = recentRewards(i) + oldRewards(i)
+                            oldRewardStats(i).merge(recentRewardStats(i))
+                          }
+                        } else {
+                          oldFeatures(i) = recentFeatures(i)
+                          oldRewards(i) = recentRewards(i)
+                          oldRewardStats(i) = recentRewardStats(i)
+                        }
+
+                        // Then reset the recent observations tracker
+                        recentFeatures(i) = DenseMatrix.zeros(numFeatures, numFeatures)
+                        recentRewards(i) = DenseVector.zeros(numFeatures)
+                        recentRewardStats(i) = new WeightedStats()
                       }
-
-                      // confidence bound for this reward
-                      val cb = {
-                        driftDetectConstant * math.sqrt(
-                          (1 + math.log(1 + recentRewardStats(i).totalWeights)) /
-                            (1 + recentRewardStats(i).totalWeights)
-                        )
-                      }
-
-                      // If drifting was detected, reset our knowledge.
-                      // Otherwise move the recent observations to the old ones
-                      if (meanDiff > cb + otherCb) {
-                        oldFeatures(i) = recentFeatures(i)
-                        oldRewards(i) = recentRewards(i)
-                        oldRewardStats(i) = recentRewardStats(i)
-                      } else {
-                        oldFeatures(i) = recentFeatures(i) + oldFeatures(i)
-                        oldRewards(i) = recentRewards(i) + oldRewards(i)
-                        oldRewardStats(i).merge(recentRewardStats(i))
-                      }
-
-                      // Then reset the recent observations tracker
-                      recentFeatures(i) = DenseMatrix.zeros(numFeatures, numFeatures)
-                      recentRewards(i) = DenseVector.zeros(numFeatures)
-                      recentRewardStats(i) = new WeightedStats()
                     }
                   }
                 }
