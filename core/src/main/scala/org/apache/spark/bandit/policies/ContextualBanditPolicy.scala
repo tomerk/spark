@@ -26,6 +26,8 @@ import org.apache.spark.util.StatCounter
 sealed trait ContextualBanditPolicyParams
 case class ContextualEpsilonGreedyPolicyParams(numFeatures: Int, epsilon: Double = 0.2)
   extends ContextualBanditPolicyParams
+case class ContextualEpsilonFirstPolicyParams(numFeatures: Int, epsilon: Double)
+  extends ContextualBanditPolicyParams
 case class LinUCBPolicyParams(numFeatures: Int, alpha: Double = 2.36)
   extends ContextualBanditPolicyParams
 case class LinThompsonSamplingPolicyParams(numFeatures: Int,
@@ -43,6 +45,18 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
   }
   val rewardStatsAccumulator: Array[WeightedStats] = {
     Array.fill(numArms)(new WeightedStats())
+  }
+
+  def totalPlays(): Double = {
+    stateLock.synchronized {
+      var sum = 0.0
+      var i = 0
+      while (i < numArms) {
+        sum += rewardStatsAccumulator(i).totalWeights
+        i += 1
+      }
+      sum
+    }
   }
 
   def chooseArm(features: DenseVector[Double]): Int = {
