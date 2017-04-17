@@ -479,6 +479,8 @@ private[spark] class BanditManager(
         new ConstantPolicy(numArms = arms.length, arm)
       case EpsilonGreedyPolicyParams(epsilon) =>
         new EpsilonGreedyPolicy(numArms = arms.length, epsilon)
+      case EpsilonFirstPolicyParams(epsilon) =>
+        new EpsilonFirstPolicy(numArms = arms.length, epsilon)
       case GaussianThompsonSamplingPolicyParams(multiplier) =>
         new GaussianThompsonSamplingPolicy(numArms = arms.length, varianceMultiplier = multiplier)
       case UCB1PolicyParams(range) =>
@@ -508,6 +510,8 @@ private[spark] class BanditManager(
     val policy = policyParams match {
       case ContextualEpsilonGreedyPolicyParams(numFeatures, epsilon) =>
         new ContextualEpsilonGreedyPolicy(numArms = arms.length, numFeatures, epsilon)
+      case ContextualEpsilonFirstPolicyParams(numFeatures, epsilon) =>
+        new ContextualEpsilonFirstPolicy(numArms = arms.length, numFeatures, epsilon)
       case LinThompsonSamplingPolicyParams(numFeatures, v, useCholesky) =>
         new LinThompsonSamplingPolicy(numArms = arms.length, numFeatures, v, useCholesky)
       case LinUCBPolicyParams(numFeatures, alpha) =>

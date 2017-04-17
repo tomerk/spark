@@ -25,6 +25,7 @@ import org.apache.spark.internal.Logging
 sealed trait BanditPolicyParams
 case class ConstantPolicyParams(arm: Int) extends BanditPolicyParams
 case class EpsilonGreedyPolicyParams(epsilon: Double = 0.2) extends BanditPolicyParams
+case class EpsilonFirstPolicyParams(epsilon: Double) extends BanditPolicyParams
 case class UCB1PolicyParams(rewardRange: Double = 1.0) extends BanditPolicyParams
 case class UCB1NormalPolicyParams(rewardRange: Double = 1.0) extends BanditPolicyParams
 case class GaussianBayesUCBPolicyParams(rewardRange: Double = 1.0) extends BanditPolicyParams
@@ -36,6 +37,18 @@ abstract class BanditPolicy(val numArms: Int) extends Logging with Serializable 
   @transient lazy private[spark] val stateLock = this
   private val rewards: Array[WeightedStats] =
     Array.fill(numArms)(new WeightedStats())
+
+  def totalPlays(): Double = {
+    stateLock.synchronized {
+      var sum = 0.0
+      var i = 0
+      while (i < numArms) {
+        sum += rewards(i).totalWeights
+        i += 1
+      }
+      sum
+    }
+  }
 
   def chooseArm(plays: Int): Int = {
     val rewardEstimates = estimateRewards(plays)
