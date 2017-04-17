@@ -113,10 +113,10 @@ private[spark] class BanditManager(
               ids.foreach { case (id, threadId) =>
                 if (policies.containsKey((id, threadId))) {
                   val (policy, recentRewards, oldRewards) = policies.get((id, threadId))
-
+                  var resetAnyArms = false
                   val arms = policy.numArms
-                  for (i <- 0 until arms) {
-                    policy.stateLock.synchronized {
+                  policy.stateLock.synchronized {
+                    for (i <- 0 until arms) {
                       if (recentRewards(i).totalWeights >= minDriftExamples) {
                         if (oldRewards(i).totalWeights >= minDriftExamples) {
                           // Identify whether drifting occurred
@@ -143,16 +143,26 @@ private[spark] class BanditManager(
                           // If drifting was detected, reset our knowledge.
                           // Otherwise move the recent observations to the old ones
                           if (meanDiff > cb + oldCb) {
+                            resetAnyArms = true
                             oldRewards(i) = recentRewards(i)
                           } else {
                             oldRewards(i).merge(recentRewards(i))
                           }
                         } else {
-                          oldRewards(i) = recentRewards(i)
+                          oldRewards(i).merge(recentRewards(i))
                         }
 
                         // Then reset the recent observations tracker
                         recentRewards(i) = new WeightedStats()
+                      }
+                    }
+
+                    if (resetAnyArms) {
+                      for (i <- 0 until arms) {
+                        if (recentRewards(i).totalWeights < minDriftExamples) {
+                          recentRewards(i) = new WeightedStats()
+                          oldRewards(i) = new WeightedStats()
+                        }
                       }
                     }
                   }
@@ -163,9 +173,10 @@ private[spark] class BanditManager(
                     contextualPolicies.get((id, threadId))
                   }
 
+                  var resetAnyArms = false
                   val arms = policy.numArms
-                  for (i <- 0 until arms) {
-                    policy.stateLock.synchronized {
+                  policy.stateLock.synchronized {
+                    for (i <- 0 until arms) {
                       if (recentRewardStats(i).totalWeights >= minDriftExamples) {
                         val numFeatures = recentFeatures(i).rows
 
@@ -196,6 +207,7 @@ private[spark] class BanditManager(
                           // If drifting was detected, reset our knowledge.
                           // Otherwise move the recent observations to the old ones
                           if (meanDiff > cb + otherCb) {
+                            resetAnyArms = true
                             oldFeatures(i) = recentFeatures(i)
                             oldRewards(i) = recentRewards(i)
                             oldRewardStats(i) = recentRewardStats(i)
@@ -205,15 +217,32 @@ private[spark] class BanditManager(
                             oldRewardStats(i).merge(recentRewardStats(i))
                           }
                         } else {
-                          oldFeatures(i) = recentFeatures(i)
-                          oldRewards(i) = recentRewards(i)
-                          oldRewardStats(i) = recentRewardStats(i)
+                          oldFeatures(i) = recentFeatures(i) + oldFeatures(i)
+                          oldRewards(i) = recentRewards(i) + oldRewards(i)
+                          oldRewardStats(i).merge(recentRewardStats(i))
                         }
 
                         // Then reset the recent observations tracker
                         recentFeatures(i) = DenseMatrix.zeros(numFeatures, numFeatures)
                         recentRewards(i) = DenseVector.zeros(numFeatures)
                         recentRewardStats(i) = new WeightedStats()
+                      }
+                    }
+
+                    // If any arm has been reset, also reset arms that haven't been explored enough
+                    // to make a judgement for.
+                    if (resetAnyArms) {
+                      for (i <- 0 until arms) {
+                        if (recentRewardStats(i).totalWeights < minDriftExamples) {
+                          val numFeatures = recentFeatures(i).rows
+
+                          recentFeatures(i) = DenseMatrix.zeros(numFeatures, numFeatures)
+                          recentRewards(i) = DenseVector.zeros(numFeatures)
+                          recentRewardStats(i) = new WeightedStats()
+                          oldFeatures(i) = DenseMatrix.zeros(numFeatures, numFeatures)
+                          oldRewards(i) = DenseVector.zeros(numFeatures)
+                          oldRewardStats(i) = new WeightedStats()
+                        }
                       }
                     }
                   }
