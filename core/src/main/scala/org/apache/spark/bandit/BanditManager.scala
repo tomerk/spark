@@ -157,10 +157,11 @@ private[spark] class BanditManager(
                       }
                     }
 
+                    // If any arm has been reset, forget the old data of arms that
+                    // haven't been explored enough to make a judgement for.
                     if (resetAnyArms) {
                       for (i <- 0 until arms) {
                         if (recentRewards(i).totalWeights < minDriftExamples) {
-                          recentRewards(i) = new WeightedStats()
                           oldRewards(i) = new WeightedStats()
                         }
                       }
@@ -229,16 +230,13 @@ private[spark] class BanditManager(
                       }
                     }
 
-                    // If any arm has been reset, also reset arms that haven't been explored enough
-                    // to make a judgement for.
+                    // If any arm has been reset, forget the old data of arms that
+                    // haven't been explored enough to make a judgement for.
                     if (resetAnyArms) {
                       for (i <- 0 until arms) {
                         if (recentRewardStats(i).totalWeights < minDriftExamples) {
                           val numFeatures = recentFeatures(i).rows
 
-                          recentFeatures(i) = DenseMatrix.zeros(numFeatures, numFeatures)
-                          recentRewards(i) = DenseVector.zeros(numFeatures)
-                          recentRewardStats(i) = new WeightedStats()
                           oldFeatures(i) = DenseMatrix.zeros(numFeatures, numFeatures)
                           oldRewards(i) = DenseVector.zeros(numFeatures)
                           oldRewardStats(i) = new WeightedStats()
