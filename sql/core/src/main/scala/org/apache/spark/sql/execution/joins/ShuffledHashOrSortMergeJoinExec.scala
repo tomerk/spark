@@ -18,7 +18,8 @@
 package org.apache.spark.sql.execution.joins
 
 import org.apache.spark.TaskContext
-import org.apache.spark.bandit.policies.EpsilonGreedyPolicyParams
+import org.apache.spark.bandit.Bandit
+import org.apache.spark.bandit.policies.{EpsilonGreedyPolicyParams, UCB1NormalPolicyParams}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, GenericInternalRow, JoinedRow, Projection, UnsafeProjection}
@@ -47,12 +48,21 @@ case class ShuffledHashOrSortMergeJoinExec(
   //val sc = left.sqlContext.sparkContext
   def joinByHash(in: (Iterator[InternalRow], Iterator[InternalRow], SQLMetric,
     Seq[Attribute], Seq[Attribute])): Iterator[InternalRow] = {
-    val hashed = buildHashedRelation(in._2)
-    join(in._1, hashed, in._3)
+    val (buildPartition, streamPartition) = buildSide match {
+      case BuildLeft => (in._1, in._2)
+      case BuildRight => (in._2, in._1)
+    }
+
+    logError("Join by hash")
+    val hashed = buildHashedRelation(buildPartition)
+    join(streamPartition, hashed, in._3).map(_.copy()).toBuffer.iterator
   }
 
   def joinBySort(in: (Iterator[InternalRow], Iterator[InternalRow], SQLMetric,
     Seq[Attribute], Seq[Attribute])): Iterator[InternalRow] = {
+
+    logError(s"Join by sort")
+
     val (leftOutput, rightOutput) = (in._4, in._5)
     val boundCondition: (InternalRow) => Boolean = {
       condition.map { cond =>
@@ -82,7 +92,6 @@ case class ShuffledHashOrSortMergeJoinExec(
     val rightList = in._2.map(_.copy()).toArray
     //val start = System.currentTimeMillis()
 
-    logError(s"${leftList.size}, ${rightList.size} Yay")
     //logError(s"read: ${TaskContext.get().taskMetrics().shuffleReadMetrics.recordsRead}")
     java.util.Arrays.sort(leftList, keyOrdering)
     java.util.Arrays.sort(rightList, keyOrdering)
@@ -105,8 +114,8 @@ case class ShuffledHashOrSortMergeJoinExec(
           private[this] var currentRightMatches: ArrayBuffer[InternalRow] = _
           private[this] var currentMatchIdx: Int = -1
           private[this] val smjScanner = new SortMergeJoinScanner(
-            UnsafeProjection.create(leftKeys, left.output),
-            UnsafeProjection.create(rightKeys, right.output),
+            UnsafeProjection.create(leftKeys, leftOutput),
+            UnsafeProjection.create(rightKeys, rightOutput),
             keyOrdering,
             RowIterator.fromScala(leftIter),
             RowIterator.fromScala(rightIter)
@@ -295,7 +304,7 @@ case class ShuffledHashOrSortMergeJoinExec(
           }
 
           override def getRow: InternalRow = resultProj(joinRow(currentLeftRow, result))
-        }.toScala
+        }.toScala.map(_.copy()).toBuffer.iterator
 
       case x =>
         throw new IllegalArgumentException(
@@ -327,12 +336,19 @@ case class ShuffledHashOrSortMergeJoinExec(
   }
 
   protected override def doExecute(): RDD[InternalRow] = {
+    val hashOrJoinBandit: Bandit[(Iterator[InternalRow], Iterator[InternalRow], SQLMetric,
+      Seq[Attribute], Seq[Attribute]), Iterator[InternalRow]] = {
+      sparkContext.bandit(Seq(joinByHash(_),
+        joinBySort(_)), UCB1NormalPolicyParams(0.4))
+    }
+
     val numOutputRows = longMetric("numOutputRows")
-    streamedPlan.execute().zipPartitions(buildPlan.execute()) { (streamIter, buildIter) =>
+    val (leftOutput, rightOutput) = (left.output, right.output)
+    left.execute().zipPartitions(right.execute()) { (leftIter, rightIter) =>
       // These .copy()'s are needed because the rows are streamed unsaferows.
       //val streamIterSeq = streamIter.map(_.copy()).toStream
       //val buildIterSeq = buildIter.map(_.copy()).toStream
-      joinBySort((streamIter, buildIter, numOutputRows, left.output, right.output))
+      hashOrJoinBandit((leftIter, rightIter, numOutputRows, leftOutput, rightOutput))
     }
   }
 

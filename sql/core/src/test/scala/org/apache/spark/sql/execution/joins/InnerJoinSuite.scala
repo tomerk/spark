@@ -117,6 +117,21 @@ class InnerJoinSuite extends SparkPlanTest with SharedSQLContext {
       EnsureRequirements(spark.sessionState.conf).apply(filteredJoin)
     }
 
+    def makeShuffledHashOrSortMergeJoin(
+                              leftKeys: Seq[Expression],
+                              rightKeys: Seq[Expression],
+                              boundCondition: Option[Expression],
+                              leftPlan: SparkPlan,
+                              rightPlan: SparkPlan,
+                              side: BuildSide) = {
+      val shuffledHashJoin = joins.ShuffledHashOrSortMergeJoinExec(
+        leftKeys, rightKeys, Inner,
+        side, None, leftPlan, rightPlan)
+      val filteredJoin =
+        boundCondition.map(FilterExec(_, shuffledHashJoin)).getOrElse(shuffledHashJoin)
+      EnsureRequirements(spark.sessionState.conf).apply(filteredJoin)
+    }
+
     def makeSortMergeJoin(
         leftKeys: Seq[Expression],
         rightKeys: Seq[Expression],
@@ -170,6 +185,30 @@ class InnerJoinSuite extends SparkPlanTest with SharedSQLContext {
           checkAnswer2(leftRows, rightRows, (leftPlan: SparkPlan, rightPlan: SparkPlan) =>
             makeShuffledHashJoin(
               leftKeys, rightKeys, boundCondition, leftPlan, rightPlan, joins.BuildRight),
+            expectedAnswer.map(Row.fromTuple),
+            sortAnswers = true)
+        }
+      }
+    }
+
+    test(s"$testName using ShuffledHashOrSortMergeJoin (build=right)") {
+      extractJoinParts().foreach { case (_, leftKeys, rightKeys, boundCondition, _, _) =>
+        withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
+          checkAnswer2(leftRows, rightRows, (leftPlan: SparkPlan, rightPlan: SparkPlan) =>
+            makeShuffledHashOrSortMergeJoin(
+              leftKeys, rightKeys, boundCondition, leftPlan, rightPlan, joins.BuildRight),
+            expectedAnswer.map(Row.fromTuple),
+            sortAnswers = true)
+        }
+      }
+    }
+
+    test(s"$testName using ShuffledHashOrSortMergeJoin (build=left)") {
+      extractJoinParts().foreach { case (_, leftKeys, rightKeys, boundCondition, _, _) =>
+        withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
+          checkAnswer2(leftRows, rightRows, (leftPlan: SparkPlan, rightPlan: SparkPlan) =>
+            makeShuffledHashOrSortMergeJoin(
+              leftKeys, rightKeys, boundCondition, leftPlan, rightPlan, joins.BuildLeft),
             expectedAnswer.map(Row.fromTuple),
             sortAnswers = true)
         }

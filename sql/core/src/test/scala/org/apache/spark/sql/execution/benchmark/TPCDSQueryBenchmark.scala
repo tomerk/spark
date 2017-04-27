@@ -39,9 +39,12 @@ object TPCDSQueryBenchmark {
       .setMaster("local[4]")
       .setAppName("test-sql-context")
       .set("spark.sql.parquet.compression.codec", "snappy")
-      .set("spark.sql.shuffle.partitions", "16")
+      .set("spark.sql.shuffle.partitions", "200")
       .set("spark.driver.memory", "3g")
       .set("spark.executor.memory", "3g")
+      .set("spark.bandits.driftDetectionRate", "99999999s")
+      .set("spark.bandits.communicationRate", "500ms")
+      .set("spark.sql.join.banditJoin", "true")
         //.set("spark.sql.codegen.wholeStage", "false")
       .set("spark.sql.autoBroadcastJoinThreshold", (20 * 1024 * 1024).toString)
       .set("spark.sql.crossJoin.enabled", "true")
@@ -91,7 +94,7 @@ object TPCDSQueryBenchmark {
         case _ =>
       }
       val numRows = queryRelations.map(tableSizes.getOrElse(_, 0L)).sum
-      val benchmark = new Benchmark(s"TPCDS Snappy", numRows, 5)
+      val benchmark = new Benchmark(s"TPCDS Snappy", numRows, 1)
       benchmark.addCase(name) { i =>
         spark.sql(queryString).collect()
       }

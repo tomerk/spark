@@ -140,6 +140,17 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
       a.stats(conf).sizeInBytes * 3 <= b.stats(conf).sizeInBytes
     }
 
+    /**
+     * Returns whether plan a is smaller than plan b.
+     *
+     * The cost to build hash map is higher than sorting, we should only build hash map on a table
+     * that is much smaller than other one. Since we does not have the statistic for number of rows,
+     * use the size of bytes here as estimation.
+     */
+    private def smaller(a: LogicalPlan, b: LogicalPlan): Boolean = {
+      a.statistics.sizeInBytes <= b.statistics.sizeInBytes
+    }
+
     private def canBuildRight(joinType: JoinType): Boolean = joinType match {
       case _: InnerLike | LeftOuter | LeftSemi | LeftAnti => true
       case j: ExistenceJoin => true
@@ -157,12 +168,32 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
 
       case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left, right)
         if canBuildRight(joinType) && canBroadcast(right) =>
+        logError("Broadcast join right smaller")
         Seq(joins.BroadcastHashJoinExec(
           leftKeys, rightKeys, joinType, BuildRight, condition, planLater(left), planLater(right)))
 
       case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left, right)
         if canBuildLeft(joinType) && canBroadcast(left) =>
+        logError("Broadcast join left smaller")
         Seq(joins.BroadcastHashJoinExec(
+          leftKeys, rightKeys, joinType, BuildLeft, condition, planLater(left), planLater(right)))
+
+      // --- ShuffledHashOrSortMergeJoin ---------------------------------------------------------
+
+      case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left, right)
+        if conf.preferBanditJoin && canBuildRight(joinType) && canBuildLocalHashMap(right)
+          && smaller(right, left) ||
+          !RowOrdering.isOrderable(leftKeys) =>
+        logError("Right bandit join")
+        Seq(joins.ShuffledHashOrSortMergeJoinExec(
+          leftKeys, rightKeys, joinType, BuildRight, condition, planLater(left), planLater(right)))
+
+      case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left, right)
+        if conf.preferBanditJoin && canBuildLeft(joinType) && canBuildLocalHashMap(left)
+          && smaller(left, right) ||
+          !RowOrdering.isOrderable(leftKeys) =>
+        logError("Left bandit join")
+        Seq(joins.ShuffledHashOrSortMergeJoinExec(
           leftKeys, rightKeys, joinType, BuildLeft, condition, planLater(left), planLater(right)))
 
       // --- ShuffledHashJoin ---------------------------------------------------------------------
@@ -171,6 +202,7 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
          if !conf.preferSortMergeJoin && canBuildRight(joinType) && canBuildLocalHashMap(right)
            && muchSmaller(right, left) ||
            !RowOrdering.isOrderable(leftKeys) =>
+        logError("shuffled hash join")
         Seq(joins.ShuffledHashJoinExec(
           leftKeys, rightKeys, joinType, BuildRight, condition, planLater(left), planLater(right)))
 
@@ -178,6 +210,7 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
          if !conf.preferSortMergeJoin && canBuildLeft(joinType) && canBuildLocalHashMap(left)
            && muchSmaller(left, right) ||
            !RowOrdering.isOrderable(leftKeys) =>
+        logError("shuffled hash join")
         Seq(joins.ShuffledHashJoinExec(
           leftKeys, rightKeys, joinType, BuildLeft, condition, planLater(left), planLater(right)))
 
@@ -185,6 +218,7 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
 
       case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left, right)
         if RowOrdering.isOrderable(leftKeys) =>
+        logError("Sort merge join")
         joins.SortMergeJoinExec(
           leftKeys, rightKeys, joinType, condition, planLater(left), planLater(right)) :: Nil
 
@@ -193,15 +227,18 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
       // Pick BroadcastNestedLoopJoin if one side could be broadcasted
       case j @ logical.Join(left, right, joinType, condition)
           if canBuildRight(joinType) && canBroadcast(right) =>
+        logError("Broadcast nested loops join")
         joins.BroadcastNestedLoopJoinExec(
           planLater(left), planLater(right), BuildRight, joinType, condition) :: Nil
       case j @ logical.Join(left, right, joinType, condition)
           if canBuildLeft(joinType) && canBroadcast(left) =>
+        logError("Broadcast nested loops join")
         joins.BroadcastNestedLoopJoinExec(
           planLater(left), planLater(right), BuildLeft, joinType, condition) :: Nil
 
       // Pick CartesianProduct for InnerJoin
       case logical.Join(left, right, _: InnerLike, condition) =>
+        logError("Cartesian product join")
         joins.CartesianProductExec(planLater(left), planLater(right), condition) :: Nil
 
       case logical.Join(left, right, joinType, condition) =>
@@ -211,6 +248,7 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
           } else {
             BuildLeft
           }
+        logError("Broadcast nested loops join")
         // This join could be very slow or OOM
         joins.BroadcastNestedLoopJoinExec(
           planLater(left), planLater(right), buildSide, joinType, condition) :: Nil
