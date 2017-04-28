@@ -55,7 +55,7 @@ case class ShuffledHashOrSortMergeJoinExec(
 
     logError("Join by hash")
     val hashed = buildHashedRelation(buildPartition)
-    join(streamPartition, hashed, in._3).map(_.copy()).toBuffer.iterator
+    join(streamPartition, hashed, in._3)//.map(_.copy()).toBuffer.iterator
   }
 
   def joinBySort(in: (Iterator[InternalRow], Iterator[InternalRow], SQLMetric,
@@ -304,7 +304,7 @@ case class ShuffledHashOrSortMergeJoinExec(
           }
 
           override def getRow: InternalRow = resultProj(joinRow(currentLeftRow, result))
-        }.toScala.map(_.copy()).toBuffer.iterator
+        }.toScala//.map(_.copy()).toBuffer.iterator
 
       case x =>
         throw new IllegalArgumentException(
@@ -348,7 +348,18 @@ case class ShuffledHashOrSortMergeJoinExec(
       // These .copy()'s are needed because the rows are streamed unsaferows.
       //val streamIterSeq = streamIter.map(_.copy()).toStream
       //val buildIterSeq = buildIter.map(_.copy()).toStream
-      hashOrJoinBandit((leftIter, rightIter, numOutputRows, leftOutput, rightOutput))
+      val context = TaskContext.get()
+
+      val startTime = System.nanoTime()
+      val (result, delayedFeedback) = hashOrJoinBandit.applyAndDelayFeedback(
+        (leftIter, rightIter, numOutputRows, leftOutput, rightOutput))
+
+      context.addTaskCompletionListener(_ => {
+        val endTime = System.nanoTime()
+        val reward = startTime - endTime // This is intentionally negative. Long time is bad.
+        delayedFeedback.provide(reward)
+      })
+      result
     }
   }
 
