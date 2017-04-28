@@ -50,6 +50,9 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, co
   private val minClusterExamples: Int = {
     conf.getInt("spark.bandits.minClusterExamples", 2)
   }
+  private val alwaysShare: Boolean = {
+    conf.getBoolean("spark.bandits.alwaysShare", false)
+  }
 
 
   // banditId -> ((executorId, threadId) -> states)
@@ -75,33 +78,38 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, co
           for (executor <- otherStates) {
             val otherRewards = executor._2
             for (i <- 0 until arms) {
-              if (rewards(i).totalWeights >= minClusterExamples &&
-                otherRewards(i).totalWeights >= minClusterExamples) {
-                // Identify whether to cluster from the arm observations
-                val meanDiff = math.abs(rewards(i).mean - otherRewards(i).mean)
+              if (alwaysShare) {
+                // Cluster these observations
+                responseRewards(i).merge(otherRewards(i))
+              } else {
+                if (rewards(i).totalWeights >= minClusterExamples &&
+                  otherRewards(i).totalWeights >= minClusterExamples) {
+                  // Identify whether to cluster from the arm observations
+                  val meanDiff = math.abs(rewards(i).mean - otherRewards(i).mean)
 
-                // confidence bound for the other reward
-                val otherCb = {
-                  banditClusterConstant * math.sqrt(
-                    otherRewards(i).variance *
-                      (1 + math.log(1 + otherRewards(i).totalWeights)) /
-                      (1 + otherRewards(i).totalWeights)
-                  )
-                }
+                  // confidence bound for the other reward
+                  val otherCb = {
+                    banditClusterConstant * math.sqrt(
+                      otherRewards(i).variance *
+                        (1 + math.log(1 + otherRewards(i).totalWeights)) /
+                        (1 + otherRewards(i).totalWeights)
+                    )
+                  }
 
-                // confidence bound for this reward
-                val cb = {
-                  banditClusterConstant * math.sqrt(
-                    rewards(i).variance *
-                      (1 + math.log(1 + rewards(i).totalWeights)) /
-                      (1 + rewards(i).totalWeights)
-                  )
-                }
+                  // confidence bound for this reward
+                  val cb = {
+                    banditClusterConstant * math.sqrt(
+                      rewards(i).variance *
+                        (1 + math.log(1 + rewards(i).totalWeights)) /
+                        (1 + rewards(i).totalWeights)
+                    )
+                  }
 
-                // Cluster these observations if the difference is within
-                // the confidence bounds
-                if (meanDiff < cb + otherCb) {
-                  responseRewards(i).merge(otherRewards(i))
+                  // Cluster these observations if the difference is within
+                  // the confidence bounds
+                  if (meanDiff < cb + otherCb) {
+                    responseRewards(i).merge(otherRewards(i))
+                  }
                 }
               }
             }
@@ -128,36 +136,43 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, co
           for (executor <- otherStates) {
             val (otherFeatures, otherRewards, otherRewardStats, otherWeights) = executor._2
             for (i <- 0 until arms) {
-              if (rewardStats(i).totalWeights >= minClusterExamples &&
-                otherRewardStats(i).totalWeights >= minClusterExamples) {
+              if (alwaysShare) {
+                // Cluster these observations
+                responseObservations._1(i) = responseObservations._1(i) + otherFeatures(i)
+                responseObservations._2(i) = responseObservations._2(i) + otherRewards(i)
+                responseObservations._3(i).merge(otherRewardStats(i))
+              } else {
+                if (rewardStats(i).totalWeights >= minClusterExamples &&
+                  otherRewardStats(i).totalWeights >= minClusterExamples) {
 
-                // Identify whether to cluster from the arm observations
-                // TODO: It's probably possible to get a divide by zero error here?
-                val meanOfNorms = (norm(weights(i)) + norm(otherWeights(i))) / 2.0
-                val meanDiff = norm(weights(i) - otherWeights(i)) / meanOfNorms
+                  // Identify whether to cluster from the arm observations
+                  // TODO: It's probably possible to get a divide by zero error here?
+                  val meanOfNorms = (norm(weights(i)) + norm(otherWeights(i))) / 2.0
+                  val meanDiff = norm(weights(i) - otherWeights(i)) / meanOfNorms
 
-                // confidence bound for the other reward
-                val otherCb = {
-                  banditClusterConstant * math.sqrt(
-                    (1 + math.log(1 + otherRewardStats(i).totalWeights)) /
-                      (1 + otherRewardStats(i).totalWeights)
-                  )
-                }
+                  // confidence bound for the other reward
+                  val otherCb = {
+                    banditClusterConstant * math.sqrt(
+                      (1 + math.log(1 + otherRewardStats(i).totalWeights)) /
+                        (1 + otherRewardStats(i).totalWeights)
+                    )
+                  }
 
-                // confidence bound for this reward
-                val cb = {
-                  banditClusterConstant * math.sqrt(
-                    (1 + math.log(1 + rewardStats(i).totalWeights)) /
-                      (1 + rewardStats(i).totalWeights)
-                  )
-                }
+                  // confidence bound for this reward
+                  val cb = {
+                    banditClusterConstant * math.sqrt(
+                      (1 + math.log(1 + rewardStats(i).totalWeights)) /
+                        (1 + rewardStats(i).totalWeights)
+                    )
+                  }
 
-                // Cluster these observations if the difference is within
-                // the confidence bounds
-                if (meanDiff < cb + otherCb) {
-                  responseObservations._1(i) = responseObservations._1(i) + otherFeatures(i)
-                  responseObservations._2(i) = responseObservations._2(i) + otherRewards(i)
-                  responseObservations._3(i).merge(otherRewardStats(i))
+                  // Cluster these observations if the difference is within
+                  // the confidence bounds
+                  if (meanDiff < cb + otherCb) {
+                    responseObservations._1(i) = responseObservations._1(i) + otherFeatures(i)
+                    responseObservations._2(i) = responseObservations._2(i) + otherRewards(i)
+                    responseObservations._3(i).merge(otherRewardStats(i))
+                  }
                 }
               }
             }
