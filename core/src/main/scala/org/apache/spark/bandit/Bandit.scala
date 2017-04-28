@@ -28,6 +28,18 @@ trait BanditTrait[A, B] extends Serializable {
   def vectorizedApply(in: Seq[A]): Seq[B]
 }
 
+class DelayedBanditFeedbackProvider(bandit: Bandit[_, _],
+                                    arm: Int,
+                                    plays: Int,
+                                    initRuntime: Long,
+                                    threadId: Long) {
+  var totalTime = initRuntime
+  def getRuntime: Long = totalTime
+  def provide(reward: Double): Unit = {
+    bandit.provideDelayedFeedback(threadId, arm, reward, plays)
+  }
+}
+
 /**
  * The bandit class is used for dynamically tuned methods appearing in spark tasks.
  */
@@ -58,6 +70,20 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     result
   }
 
+  def applyAndDelayFeedback(in: A): (B, DelayedBanditFeedbackProvider) = {
+    val threadId = java.lang.Thread.currentThread().getId
+    val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
+    val arm = policy.chooseArm(1)
+    val startTime = System.nanoTime()
+    val result = arms(arm).apply(in)
+    val endTime = System.nanoTime()
+
+    // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
+    val reward = startTime - endTime
+    val delayedProvider = new DelayedBanditFeedbackProvider(this, arm, 1, reward, threadId)
+    (result, delayedProvider)
+  }
+
   def applyAndOutputReward(in: A): (B, Action) = {
     val threadId = java.lang.Thread.currentThread().getId
     val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
@@ -72,6 +98,15 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
 
     banditManager.provideFeedback(id, threadId, arm, 1, reward)
     (result, Action(arm, startTime - endTime))
+  }
+
+  protected[bandit] def provideDelayedFeedback(
+    threadId: Long,
+    arm: Int,
+    reward: Double,
+    plays: Int
+  ): Unit = {
+    banditManager.provideFeedback(id, threadId, arm, plays, reward)
   }
 
 
