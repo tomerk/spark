@@ -19,7 +19,7 @@ package org.apache.spark.sql.execution.joins
 
 import org.apache.spark.TaskContext
 import org.apache.spark.bandit.Bandit
-import org.apache.spark.bandit.policies.{EpsilonGreedyPolicyParams, UCB1NormalPolicyParams}
+import org.apache.spark.bandit.policies.{EpsilonGreedyPolicyParams, GaussianBayesUCBPolicyParams, UCB1NormalPolicyParams}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, GenericInternalRow, JoinedRow, Projection, UnsafeProjection}
@@ -53,15 +53,12 @@ case class ShuffledHashOrSortMergeJoinExec(
       case BuildRight => (in._2, in._1)
     }
 
-    logError("Join by hash")
     val hashed = buildHashedRelation(buildPartition)
     join(streamPartition, hashed, in._3)//.map(_.copy()).toBuffer.iterator
   }
 
   def joinBySort(in: (Iterator[InternalRow], Iterator[InternalRow], SQLMetric,
     Seq[Attribute], Seq[Attribute])): Iterator[InternalRow] = {
-
-    logError(s"Join by sort")
 
     val (leftOutput, rightOutput) = (in._4, in._5)
     val boundCondition: (InternalRow) => Boolean = {
@@ -71,8 +68,6 @@ case class ShuffledHashOrSortMergeJoinExec(
         (r: InternalRow) => true
       }
     }
-
-    //logError(s"read: ${TaskContext.get().taskMetrics().shuffleReadMetrics.recordsRead}")
 
     // An ordering that can be used to compare keys from both sides.
     val keyOrdering = newNaturalAscendingOrdering(leftKeys.map(_.dataType))
@@ -336,10 +331,17 @@ case class ShuffledHashOrSortMergeJoinExec(
   }
 
   protected override def doExecute(): RDD[InternalRow] = {
+    val banditMode = sparkContext.conf.get("spark.bandits.shuffleSortHash", "both")
     val hashOrJoinBandit: Bandit[(Iterator[InternalRow], Iterator[InternalRow], SQLMetric,
       Seq[Attribute], Seq[Attribute]), Iterator[InternalRow]] = {
-      sparkContext.bandit(Seq(joinByHash(_),
-        joinBySort(_)), UCB1NormalPolicyParams(0.4))
+      banditMode match {
+        case "both" => sparkContext.bandit (Seq (joinByHash (_),
+          joinBySort (_) ), GaussianBayesUCBPolicyParams() )
+        case "sort" => sparkContext.bandit (Seq (joinBySort (_)),
+          GaussianBayesUCBPolicyParams() )
+        case "hash" => sparkContext.bandit (Seq (joinByHash (_)),
+          GaussianBayesUCBPolicyParams() )
+      }
     }
 
     val numOutputRows = longMetric("numOutputRows")
