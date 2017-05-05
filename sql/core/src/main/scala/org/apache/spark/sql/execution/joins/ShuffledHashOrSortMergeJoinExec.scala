@@ -336,11 +336,11 @@ case class ShuffledHashOrSortMergeJoinExec(
       Seq[Attribute], Seq[Attribute]), Iterator[InternalRow]] = {
       banditMode match {
         case "both" => sparkContext.bandit (Seq (joinByHash (_),
-          joinBySort (_) ), GaussianBayesUCBPolicyParams() )
+          joinBySort (_) ), UCB1NormalPolicyParams(0.4) )
         case "sort" => sparkContext.bandit (Seq (joinBySort (_)),
-          GaussianBayesUCBPolicyParams() )
+          UCB1NormalPolicyParams(0.4) )
         case "hash" => sparkContext.bandit (Seq (joinByHash (_)),
-          GaussianBayesUCBPolicyParams() )
+          UCB1NormalPolicyParams(0.4) )
       }
     }
 
