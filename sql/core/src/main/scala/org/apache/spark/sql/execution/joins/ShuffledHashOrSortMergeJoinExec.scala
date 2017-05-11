@@ -331,7 +331,9 @@ case class ShuffledHashOrSortMergeJoinExec(
   }
 
   protected override def doExecute(): RDD[InternalRow] = {
-    val banditMode = sparkContext.conf.get("spark.bandits.shuffleSortHash", "both")
+    val banditMode = sqlContext.sparkSession.conf.get(
+      "spark.sql.join.bandit.shuffleSortHash", "both")
+    logError(banditMode)
     val hashOrJoinBandit: Bandit[(Iterator[InternalRow], Iterator[InternalRow], SQLMetric,
       Seq[Attribute], Seq[Attribute]), Iterator[InternalRow]] = {
       banditMode match {

@@ -181,16 +181,14 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
       // --- ShuffledHashOrSortMergeJoin ---------------------------------------------------------
 
       case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left, right)
-        if conf.preferBanditJoin && canBuildRight(joinType) && canBuildLocalHashMap(right)
-          && smaller(right, left) ||
+        if conf.preferBanditJoin && canBuildRight(joinType) && smaller(right, left) ||
           !RowOrdering.isOrderable(leftKeys) =>
         logError("Right bandit join")
         Seq(joins.ShuffledHashOrSortMergeJoinExec(
           leftKeys, rightKeys, joinType, BuildRight, condition, planLater(left), planLater(right)))
 
       case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left, right)
-        if conf.preferBanditJoin && canBuildLeft(joinType) && canBuildLocalHashMap(left)
-          && smaller(left, right) ||
+        if conf.preferBanditJoin && canBuildLeft(joinType) && smaller(left, right) ||
           !RowOrdering.isOrderable(leftKeys) =>
         logError("Left bandit join")
         Seq(joins.ShuffledHashOrSortMergeJoinExec(
@@ -218,6 +216,12 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
 
       case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left, right)
         if RowOrdering.isOrderable(leftKeys) =>
+        logError(s"Can build right: ${canBuildRight(joinType)}")
+        logError(s"Can build left: ${canBuildLeft(joinType)}")
+        logError(s"Can build local map of right: ${canBuildLocalHashMap(right)}")
+        logError(s"Can build local map of left: ${canBuildLocalHashMap(left)}")
+        logError(s"much smaller right: ${muchSmaller(right, left)}")
+        logError(s"much smaller left: ${muchSmaller(left, right)}")
         logError("Sort merge join")
         joins.SortMergeJoinExec(
           leftKeys, rightKeys, joinType, condition, planLater(left), planLater(right)) :: Nil
