@@ -26,6 +26,20 @@ import org.apache.spark.util.StatCounter
 
 case class Action(arm: Int, reward: Double)
 
+class DelayedContextualBanditFeedbackProvider(bandit: ContextualBandit[_, _],
+                                    arm: Int,
+                                    features: DenseVector[Double],
+                                    initRuntime: Long,
+                                    threadId: Long
+                                             ) extends DelayedFeedbackProvider with Logging {
+  var totalTime = initRuntime
+  def getRuntime: Long = totalTime
+  def provide(reward: Double): Unit = {
+    //logError(s"Join ${bandit.id} by $arm took $reward")
+    bandit.provideDelayedContextualFeedback(threadId, arm, reward, features)
+  }
+}
+
 /**
  * The contextual bandit class is used for dynamically tuned methods appearing in spark tasks.
  */
@@ -57,6 +71,21 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     val reward = new WeightedStats().add(startTime - endTime)
     banditManager.provideContextualFeedback(id, threadId, arm, features, reward)
     result
+  }
+
+  def applyAndDelayFeedback(in: A): (B, DelayedContextualBanditFeedbackProvider) = {
+    val threadId = java.lang.Thread.currentThread().getId
+    val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
+
+    val features = featureExtractor(in)
+    val arm = policy.chooseArm(features)
+    val startTime = System.nanoTime()
+    val result = arms(arm).apply(in)
+    val endTime = System.nanoTime()
+
+    val delayedProvider = new DelayedContextualBanditFeedbackProvider(
+      this, arm, features, endTime - startTime, threadId)
+    (result, delayedProvider)
   }
 
   def applyAndOutputReward(in: A): (B, Action) = {
@@ -104,6 +133,18 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
     banditManager.provideContextualFeedback(id, threadId, arm, features, rewards)
     seqResult
   }
+
+  protected[bandit] def provideDelayedContextualFeedback(
+      threadId: Long,
+      arm: Int,
+      reward: Double,
+      features: DenseVector[Double]
+    ): Unit = {
+    val rewardStats = new WeightedStats().add(reward)
+
+    banditManager.provideContextualFeedback(id, threadId, arm, features, rewardStats)
+  }
+
 
   def saveTunedSettings(file: String): Unit = {
     throw new NotImplementedError()
