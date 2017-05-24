@@ -26,13 +26,21 @@ trait BanditTrait[A, B] extends Serializable {
   def apply(in: A): B
   def applyAndOutputReward(in: A): (B, Action)
   def vectorizedApply(in: Seq[A]): Seq[B]
+  def applyAndDelayFeedback(in: A): (B, DelayedFeedbackProvider)
+
+}
+
+trait DelayedFeedbackProvider extends Serializable {
+  def getRuntime: Long
+  def provide(reward: Double)
 }
 
 class DelayedBanditFeedbackProvider(bandit: Bandit[_, _],
                                     arm: Int,
                                     plays: Int,
                                     initRuntime: Long,
-                                    threadId: Long) {
+                                    threadId: Long
+                                   ) extends DelayedFeedbackProvider with Logging {
   var totalTime = initRuntime
   def getRuntime: Long = totalTime
   def provide(reward: Double): Unit = {
