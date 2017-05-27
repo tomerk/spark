@@ -98,6 +98,9 @@ private[spark] class BanditManager(
         // Probably shouldn't set to less than 2 otherwise errors can occur & variance can
         // get screwy.
         val minDriftExamples = conf.getInt("spark.bandits.minDriftExamples", 2)
+        val contextCombinedWeights = {
+          conf.getBoolean("spark.bandits.contextCombinedWeights", false)
+        }
         if (driftDetectRate > 0) {
           banditDriftDetectTask = eventLoopThread.scheduleAtFixedRate(new Runnable {
             override def run(): Unit = Utils.tryLogNonFatalError {
@@ -182,40 +185,103 @@ private[spark] class BanditManager(
                         val numFeatures = recentFeatures(i).rows
 
                         if (oldRewardStats(i).totalWeights >= minDriftExamples) {
-                          val eye = DenseMatrix.eye[Double](numFeatures)
-                          val recentWeights = (recentFeatures(i) + eye) \ recentRewards(i)
-                          val oldWeights = (oldFeatures(i) + eye) \ oldRewards(i)
+                          if (contextCombinedWeights) {
+                            val eye = DenseMatrix.eye[Double](numFeatures)
 
-                          val meanOfNorms = (norm(recentWeights) + norm(oldWeights)) / 2.0
-                          val meanDiff = norm(recentWeights - oldWeights) / meanOfNorms
+                            // Cluster observations if the weights produced by clustering them
+                            // don't worsen the results of just using the correct observations
+                            // alone. Useful when we have enough features to model everything,
+                            // but the data properties across the clusters differ
+                            val combinedWeights = (recentFeatures(i) + oldFeatures(i) + eye) \
+                              (recentRewards(i) + oldRewards(i))
 
-                          // confidence bound for the other reward
-                          val otherCb = {
-                            driftDetectConstant * math.sqrt(
-                              (1 + math.log(1 + oldRewardStats(i).totalWeights)) /
-                                (1 + oldRewardStats(i).totalWeights)
-                            )
-                          }
+                            // To compute r^2: $$1-(Y^TY-\beta^TX^TY-Y^TX\beta+\beta^TX^TX\beta)$$
 
-                          // confidence bound for this reward
-                          val cb = {
-                            driftDetectConstant * math.sqrt(
-                              (1 + math.log(1 + recentRewardStats(i).totalWeights)) /
-                                (1 + recentRewardStats(i).totalWeights)
-                            )
-                          }
+                            val yty = recentRewardStats(i).normL2 * recentRewardStats(i).normL2
+                            val baseSSEExplained = {
+                              val recentWeights = (recentFeatures(i) + eye) \ recentRewards(i)
+                              val betaXtY = recentWeights.t * recentRewards(i)
+                              val betaXtXbeta = {
+                                recentWeights.t * recentFeatures(i) * recentWeights
+                              }
 
-                          // If drifting was detected, reset our knowledge.
-                          // Otherwise move the recent observations to the old ones
-                          if (meanDiff > cb + otherCb) {
-                            resetAnyArms = true
-                            oldFeatures(i) = recentFeatures(i)
-                            oldRewards(i) = recentRewards(i)
-                            oldRewardStats(i) = recentRewardStats(i)
+                              if (yty > 0) {
+                                1.0 - ((yty - 2 * betaXtY + betaXtXbeta) / yty)
+                              } else {
+                                1.0
+                              }
+                            }
+
+                            val combinedSSEExplained = {
+                              val betaXtY = combinedWeights.t * recentRewards(i)
+                              val betaXtXbeta = combinedWeights.t * recentFeatures(i) *
+                                combinedWeights
+
+                              if (yty > 0) {
+                                1.0 - ((yty - 2 * betaXtY + betaXtXbeta) / yty)
+                              } else {
+                                1.0
+                              }
+                            }
+
+                            // confidence bound for this reward
+                            // This is probably not theoretically sound.
+                            // Probably also needs to be scaled by number of features
+                            val cb = {
+                              driftDetectConstant * math.sqrt(
+                                (1 + math.log(1 + recentRewardStats(i).totalWeights)) /
+                                  (1 + recentRewardStats(i).totalWeights)
+                              )
+                            }
+
+                            // If drifting was detected, reset our knowledge.
+                            // Otherwise move the recent observations to the old ones
+                            if ((baseSSEExplained - combinedSSEExplained) > cb) {
+                              resetAnyArms = true
+                              oldFeatures(i) = recentFeatures(i)
+                              oldRewards(i) = recentRewards(i)
+                              oldRewardStats(i) = recentRewardStats(i)
+                            } else {
+                              oldFeatures(i) = recentFeatures(i) + oldFeatures(i)
+                              oldRewards(i) = recentRewards(i) + oldRewards(i)
+                              oldRewardStats(i).merge(recentRewardStats(i))
+                            }
                           } else {
-                            oldFeatures(i) = recentFeatures(i) + oldFeatures(i)
-                            oldRewards(i) = recentRewards(i) + oldRewards(i)
-                            oldRewardStats(i).merge(recentRewardStats(i))
+                            val eye = DenseMatrix.eye[Double](numFeatures)
+                            val recentWeights = (recentFeatures(i) + eye) \ recentRewards(i)
+                            val oldWeights = (oldFeatures(i) + eye) \ oldRewards(i)
+
+                            val meanOfNorms = (norm(recentWeights) + norm(oldWeights)) / 2.0
+                            val meanDiff = norm(recentWeights - oldWeights) / meanOfNorms
+
+                            // confidence bound for the other reward
+                            val otherCb = {
+                              driftDetectConstant * math.sqrt(
+                                (1 + math.log(1 + oldRewardStats(i).totalWeights)) /
+                                  (1 + oldRewardStats(i).totalWeights)
+                              )
+                            }
+
+                            // confidence bound for this reward
+                            val cb = {
+                              driftDetectConstant * math.sqrt(
+                                (1 + math.log(1 + recentRewardStats(i).totalWeights)) /
+                                  (1 + recentRewardStats(i).totalWeights)
+                              )
+                            }
+
+                            // If drifting was detected, reset our knowledge.
+                            // Otherwise move the recent observations to the old ones
+                            if (meanDiff > cb + otherCb) {
+                              resetAnyArms = true
+                              oldFeatures(i) = recentFeatures(i)
+                              oldRewards(i) = recentRewards(i)
+                              oldRewardStats(i) = recentRewardStats(i)
+                            } else {
+                              oldFeatures(i) = recentFeatures(i) + oldFeatures(i)
+                              oldRewards(i) = recentRewards(i) + oldRewards(i)
+                              oldRewardStats(i).merge(recentRewardStats(i))
+                            }
                           }
                         } else {
                           oldFeatures(i) = recentFeatures(i) + oldFeatures(i)

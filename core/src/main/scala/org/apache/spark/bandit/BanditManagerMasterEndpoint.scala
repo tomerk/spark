@@ -53,6 +53,9 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, co
   private val alwaysShare: Boolean = {
     conf.getBoolean("spark.bandits.alwaysShare", false)
   }
+  private val contextCombinedWeights: Boolean = {
+    conf.getBoolean("spark.bandits.contextCombinedWeights", false)
+  }
 
 
   // banditId -> ((executorId, threadId) -> states)
@@ -135,12 +138,66 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, co
           val otherStates = executorState.filterNot(_._1 == (executorId, threadId))
           for (executor <- otherStates) {
             val (otherFeatures, otherRewards, otherRewardStats, otherWeights) = executor._2
+            val eye = DenseMatrix.eye[Double](numFeatures)
             for (i <- 0 until arms) {
               if (alwaysShare) {
                 // Cluster these observations
                 responseObservations._1(i) = responseObservations._1(i) + otherFeatures(i)
                 responseObservations._2(i) = responseObservations._2(i) + otherRewards(i)
                 responseObservations._3(i).merge(otherRewardStats(i))
+              } else if (contextCombinedWeights) {
+                if (rewardStats(i).totalWeights >= minClusterExamples &&
+                  otherRewardStats(i).totalWeights >= minClusterExamples) {
+
+                  // Cluster observations if the weights produced by clustering them don't
+                  // worsen the results of just using the correct observations alone.
+                  // Useful when we have enough features to model everything, but the
+                  // data properties across the clusters differ
+                  val combinedWeights = (features(i) + otherFeatures(i) + eye) \
+                    (rewards(i) + otherRewards(i))
+
+                  // To compute r^2: $$1-(Y^TY-\beta^TX^TY-Y^TX\beta+\beta^TX^TX\beta)$$
+
+                  val yty = rewardStats(i).normL2 * rewardStats(i).normL2
+                  val baseSSEExplained = {
+                    val betaXtY = weights(i).t * rewards(i)
+                    val betaXtXbeta = weights(i).t * features(i) * weights(i)
+
+                    if (yty > 0) {
+                      1.0 - ((yty - 2 * betaXtY + betaXtXbeta) / yty)
+                    } else {
+                      1.0
+                    }
+                  }
+
+                  val combinedSSEExplained = {
+                    val betaXtY = combinedWeights.t * rewards(i)
+                    val betaXtXbeta = combinedWeights.t * features(i) * combinedWeights
+
+                    if (yty > 0) {
+                      1.0 - ((yty - 2 * betaXtY + betaXtXbeta) / yty)
+                    } else {
+                      1.0
+                    }
+                  }
+
+                  // confidence bound for this reward
+                  // This is probably not theoretically sound.
+                  // Probably also needs to be scaled by number of features
+                  val cb = {
+                    banditClusterConstant * math.sqrt(
+                      (1 + math.log(1 + rewardStats(i).totalWeights)) /
+                        (1 + rewardStats(i).totalWeights)
+                    )
+                  }
+
+                  // Cluster these observations if the results didn't get much worse
+                  if ((baseSSEExplained - combinedSSEExplained) < cb) {
+                    responseObservations._1(i) = responseObservations._1(i) + otherFeatures(i)
+                    responseObservations._2(i) = responseObservations._2(i) + otherRewards(i)
+                    responseObservations._3(i).merge(otherRewardStats(i))
+                  }
+                }
               } else {
                 if (rewardStats(i).totalWeights >= minClusterExamples &&
                   otherRewardStats(i).totalWeights >= minClusterExamples) {
