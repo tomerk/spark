@@ -102,6 +102,12 @@ object SQLConf {
     .booleanConf
     .createWithDefault(false)
 
+  val CONTEXTUAL_BANDIT_JOIN = SQLConfigBuilder("spark.sql.join.banditJoin.contextual")
+    .internal()
+    .doc("When true, use bandits to choose between hash join & sort merge join on each partition.")
+    .booleanConf
+    .createWithDefault(false)
+
   val RADIX_SORT_ENABLED = SQLConfigBuilder("spark.sql.sort.enableRadixSort")
     .internal()
     .doc("When true, enable use of radix sort when possible. Radix sort is much faster but " +
@@ -742,6 +748,8 @@ private[sql] class SQLConf extends Serializable with CatalystConf with Logging {
   def preferSortMergeJoin: Boolean = getConf(PREFER_SORTMERGEJOIN)
 
   def preferBanditJoin: Boolean = getConf(BANDIT_JOIN)
+
+  def preferContextualBanditJoin: Boolean = getConf(CONTEXTUAL_BANDIT_JOIN)
 
   def enableRadixSort: Boolean = getConf(RADIX_SORT_ENABLED)
 

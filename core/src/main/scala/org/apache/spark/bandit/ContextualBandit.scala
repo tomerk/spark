@@ -33,11 +33,14 @@ class DelayedContextualBanditFeedbackProvider(bandit: ContextualBandit[_, _],
                                     threadId: Long
                                              ) extends DelayedFeedbackProvider with Logging {
   var totalTime = initRuntime
+  def banditId: Long = bandit.id
   def getRuntime: Long = totalTime
   def provide(reward: Double): Unit = {
     //logError(s"Join ${bandit.id} by $arm took $reward")
     bandit.provideDelayedContextualFeedback(threadId, arm, reward, features)
   }
+
+  override def getArm: Int = arm
 }
 
 /**
@@ -58,7 +61,12 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
    * @param in The input item
    */
   def apply(in: A): B = {
-    val threadId = java.lang.Thread.currentThread().getId
+    val threadId = if (banditManager.alwaysShare) {
+      0
+    } else {
+      java.lang.Thread.currentThread().getId
+    }
+
     val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
 
     val features = featureExtractor(in)
@@ -74,7 +82,12 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
   }
 
   def applyAndDelayFeedback(in: A): (B, DelayedContextualBanditFeedbackProvider) = {
-    val threadId = java.lang.Thread.currentThread().getId
+    val threadId = if (banditManager.alwaysShare) {
+      0
+    } else {
+      java.lang.Thread.currentThread().getId
+    }
+
     val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
 
     val features = featureExtractor(in)
@@ -89,7 +102,12 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
   }
 
   def applyAndOutputReward(in: A): (B, Action) = {
-    val threadId = java.lang.Thread.currentThread().getId
+    val threadId = if (banditManager.alwaysShare) {
+      0
+    } else {
+      java.lang.Thread.currentThread().getId
+    }
+
     val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
 
     val features = featureExtractor(in)
@@ -109,11 +127,16 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
    * to apply to all of the input. The learning for all the items will be batched
    * given that one arm was selected.
    *
-   * WARNING: Do not pass in a lazy seq.
+   * WARNING: Do not pass in a lazy seq (stream).
    * @param in The vector of input
    */
   def vectorizedApply(in: Seq[A]): Seq[B] = {
-    val threadId = java.lang.Thread.currentThread().getId
+    val threadId = if (banditManager.alwaysShare) {
+      0
+    } else {
+      java.lang.Thread.currentThread().getId
+    }
+
     val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
 
     // Because our contextual models our linear, the features is just over the individal inputs

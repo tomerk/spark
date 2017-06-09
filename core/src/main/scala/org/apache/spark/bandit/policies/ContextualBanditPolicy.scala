@@ -21,6 +21,7 @@ import java.io.ObjectOutputStream
 
 import breeze.linalg.{DenseMatrix, DenseVector}
 import org.apache.spark.bandit.WeightedStats
+import org.apache.spark.internal.Logging
 import org.apache.spark.util.StatCounter
 
 sealed trait ContextualBanditPolicyParams
@@ -35,7 +36,8 @@ case class LinThompsonSamplingPolicyParams(numFeatures: Int,
                                            useCholesky: Boolean = false)
   extends ContextualBanditPolicyParams
 
-abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) extends Serializable {
+abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) extends Serializable
+  with Logging {
   @transient lazy private[spark] val stateLock = this
   val featuresAccumulator: Array[DenseMatrix[Double]] = {
     Array.fill(numArms)(DenseMatrix.eye(numFeatures))
@@ -61,6 +63,7 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
 
   def chooseArm(features: DenseVector[Double]): Int = {
     val rewards = estimateRewards(features)
+    logError(s"$features: $rewards")
     val maxReward = rewards.max
     val bestArms = rewards.zipWithIndex.filter(_._1 == maxReward)
     bestArms(scala.util.Random.nextInt(bestArms.length))._2

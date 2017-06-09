@@ -92,6 +92,13 @@ private[ui] class RDDOperationCluster(val id: String, private var _name: String)
   }
 }
 
+object RDDOperationGraphContainsStringUtil {
+  def apply(stage: StageInfo, string: String): Boolean = {
+    val graph = RDDOperationGraph.makeOperationGraph(stage, Int.MaxValue)
+    RDDOperationGraph.makeDotFile(graph).contains(string)
+  }
+}
+
 private[ui] object RDDOperationGraph extends Logging {
 
   val STAGE_CLUSTER_PREFIX = "stage_"

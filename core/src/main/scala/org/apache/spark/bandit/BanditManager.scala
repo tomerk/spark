@@ -48,6 +48,10 @@ private[spark] class BanditManager(
     securityManager: SecurityManager)
   extends Logging {
 
+  val alwaysShare: Boolean = {
+    conf.getBoolean("spark.bandits.alwaysShare", false)
+  }
+
   private var initialized = false
 
   // policy is: (banditId, threadId) -> (policy, recentFeedback, olderfeedback)

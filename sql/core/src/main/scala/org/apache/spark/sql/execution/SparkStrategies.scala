@@ -178,18 +178,34 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
         Seq(joins.BroadcastHashJoinExec(
           leftKeys, rightKeys, joinType, BuildLeft, condition, planLater(left), planLater(right)))
 
+      // --- PartitionContextShuffledHashOrSortMergeJoin -----------------------------------------
+
+      case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left, right)
+        if conf.preferBanditJoin && (canBuildRight(joinType) && smaller(right, left) ||
+          !RowOrdering.isOrderable(leftKeys)) && conf.preferContextualBanditJoin =>
+        logError("Right bandit join")
+        Seq(joins.PartitionContextShuffledHashOrSortMergeJoinExec(
+          leftKeys, rightKeys, joinType, BuildRight, condition, planLater(left), planLater(right)))
+
+      case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left, right)
+        if conf.preferBanditJoin && (canBuildLeft(joinType) && smaller(left, right) ||
+          !RowOrdering.isOrderable(leftKeys)) && conf.preferContextualBanditJoin =>
+        logError("Left bandit join")
+        Seq(joins.PartitionContextShuffledHashOrSortMergeJoinExec(
+          leftKeys, rightKeys, joinType, BuildLeft, condition, planLater(left), planLater(right)))
+
       // --- ShuffledHashOrSortMergeJoin ---------------------------------------------------------
 
       case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left, right)
-        if conf.preferBanditJoin && canBuildRight(joinType) && smaller(right, left) ||
-          !RowOrdering.isOrderable(leftKeys) =>
+        if conf.preferBanditJoin && (canBuildRight(joinType) && smaller(right, left) ||
+          !RowOrdering.isOrderable(leftKeys)) =>
         logError("Right bandit join")
         Seq(joins.ShuffledHashOrSortMergeJoinExec(
           leftKeys, rightKeys, joinType, BuildRight, condition, planLater(left), planLater(right)))
 
       case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left, right)
-        if conf.preferBanditJoin && canBuildLeft(joinType) && smaller(left, right) ||
-          !RowOrdering.isOrderable(leftKeys) =>
+        if conf.preferBanditJoin && (canBuildLeft(joinType) && smaller(left, right) ||
+          !RowOrdering.isOrderable(leftKeys)) =>
         logError("Left bandit join")
         Seq(joins.ShuffledHashOrSortMergeJoinExec(
           leftKeys, rightKeys, joinType, BuildLeft, condition, planLater(left), planLater(right)))

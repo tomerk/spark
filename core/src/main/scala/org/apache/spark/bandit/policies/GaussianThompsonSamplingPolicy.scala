@@ -40,17 +40,16 @@ private[spark] class GaussianThompsonSamplingPolicy(
       if (numPlays > 2) {
         val runningVariance = totalRewards(arm).variance
 
-        /*
-        math.abs(new TDistribution(numPlays - 1).sample()) *
-          math.sqrt(runningVariance / totalPlays(arm)) +
-          (totalRewards(arm) / (totalPlays(arm) + 1.0)
-        )
-         */
+
+        (new TDistribution(numPlays - 1).sample()) *
+          math.sqrt(runningVariance / numPlays) +
+          totalRewards(arm).mean
+
         // Breeze expects sigma as the input to the gaussian, not the variance.
-        new Gaussian(
+        /*new Gaussian(
           totalRewards(arm).mean,
           math.sqrt(runningVariance / numPlays)
-        ).draw()
+        ).draw()*/
       } else {
         Double.PositiveInfinity
       }

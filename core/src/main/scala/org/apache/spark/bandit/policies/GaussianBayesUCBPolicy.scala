@@ -40,7 +40,7 @@ private[spark] class GaussianBayesUCBPolicy(
         val tDistribution = new TDistribution(numPlays - 1)
         val quantile = tDistribution.inverseCumulativeProbability(1.0 - (1.0/n))
         totalRewards(arm).mean + boundsConst *
-          math.sqrt(totalRewards(arm).variance / numPlays * quantile)
+          math.sqrt(totalRewards(arm).variance / numPlays) * quantile
       } else {
         Double.PositiveInfinity
       }

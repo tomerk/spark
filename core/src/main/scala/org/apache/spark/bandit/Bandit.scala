@@ -31,6 +31,8 @@ trait BanditTrait[A, B] extends Serializable {
 }
 
 trait DelayedFeedbackProvider extends Serializable {
+  def getArm: Int
+  def banditId: Long
   def getRuntime: Long
   def provide(reward: Double)
 }
@@ -46,6 +48,9 @@ class DelayedBanditFeedbackProvider(bandit: Bandit[_, _],
   def provide(reward: Double): Unit = {
     bandit.provideDelayedFeedback(threadId, arm, reward, plays)
   }
+
+  def banditId: Long = bandit.id
+  override def getArm: Int = arm
 }
 
 /**
@@ -65,7 +70,12 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
    * @param in The input item
    */
   def apply(in: A): B = {
-    val threadId = java.lang.Thread.currentThread().getId
+    val threadId = if (banditManager.alwaysShare) {
+      0
+    } else {
+      java.lang.Thread.currentThread().getId
+    }
+
     val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
     val arm = policy.chooseArm(1)
     val startTime = System.nanoTime()
@@ -79,7 +89,12 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
   }
 
   def applyAndDelayFeedback(in: A): (B, DelayedBanditFeedbackProvider) = {
-    val threadId = java.lang.Thread.currentThread().getId
+    val threadId = if (banditManager.alwaysShare) {
+      0
+    } else {
+      java.lang.Thread.currentThread().getId
+    }
+
     val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
     val arm = policy.chooseArm(1)
     val startTime = System.nanoTime()
@@ -93,7 +108,12 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
   }
 
   def applyAndOutputReward(in: A): (B, Action) = {
-    val threadId = java.lang.Thread.currentThread().getId
+    val threadId = if (banditManager.alwaysShare) {
+      0
+    } else {
+      java.lang.Thread.currentThread().getId
+    }
+
     val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
 
     val arm = policy.chooseArm(1)
@@ -126,7 +146,12 @@ class Bandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
    * @param in The vector of input
    */
   def vectorizedApply(in: Seq[A]): Seq[B] = {
-    val threadId = java.lang.Thread.currentThread().getId
+    val threadId = if (banditManager.alwaysShare) {
+      0
+    } else {
+      java.lang.Thread.currentThread().getId
+    }
+
     val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
 
     val arm = policy.chooseArm(in.length)
