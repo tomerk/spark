@@ -293,6 +293,16 @@ object WholeStageCodegenExec {
  */
 case class WholeStageCodegenExec(child: SparkPlan) extends UnaryExecNode with CodegenSupport {
 
+  override def nodeName: String = {
+    var name = "WholeStageCodegen"
+    child transform {
+      case s: SortMergeJoinExec =>
+        name = "WholeStageCodegenWithSortMergeJoin"
+        s
+      case s => s
+    }
+    name
+  }
   override def output: Seq[Attribute] = child.output
 
   override def outputPartitioning: Partitioning = child.outputPartitioning
