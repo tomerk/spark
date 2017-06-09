@@ -34,7 +34,8 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
     //conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
     conf.set("spark.driver.extraClassPath", sys.props("java.class.path"))
       .set("spark.executor.extraClassPath", sys.props("java.class.path"))
-      .set("spark.bandits.communicationRate", "5s")
+      .set("spark.bandits.communicationRate", "1s")
+      .set("spark.bandits.driftDetectionRate", "1s")
 
     sc = new SparkContext(s"local-cluster[$numSlaves, $numCoresPerSlave, $memoryPerSlave]",
       "test", conf)
@@ -70,28 +71,32 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
 
 
   test("Test Contextual Bandit Timings") {
-    val numFeatures = 10
-    val arms = 10
-    val policy = new LinThompsonSamplingPolicy(numArms = arms, numFeatures = numFeatures, 1,
-      useCholesky = true)
+    Seq(2, 2, 4, 8, 16, 32, 64).foreach { arms =>
 
-    val bestArm = 7
+      Seq(2, 4, 8, 16, 32, 64).foreach { numFeatures =>
+        val policy = new LinUCBPolicy(numArms = arms, numFeatures = numFeatures, 1)
 
-    val rewardDist = Rand.gaussian
+        val bestArm = 7
 
-    var i = 0
-    val start = System.currentTimeMillis()
-    while (i < 10000) {
-      val featureVec = DenseVector.rand[Double](numFeatures)
-      val arm = policy.chooseArm(featureVec)
+        val rewardDist = Rand.gaussian
 
-      logInfo(s"$i: $arm")
-      val reward = (rewardDist.draw() - (if (arm == bestArm) 10 else 11.5)) * 1e-10
-      policy.provideFeedback(arm, featureVec, new WeightedStats().add(reward))
-      i += 1
+        var i = 0
+        val start = System.currentTimeMillis()
+        while (i < 10000) {
+          val featureVec = DenseVector.rand[Double](numFeatures)
+          val arm = policy.chooseArm(featureVec)
+
+          //logInfo(s"$i: $arm")
+          val reward = (rewardDist.draw() - (if (arm == bestArm) 10 else 10.5)) * 1e-10
+          policy.provideFeedback(arm, featureVec, new WeightedStats().add(reward))
+          i += 1
+        }
+        val end = System.currentTimeMillis()
+        logInfo(s"${
+          (end - start) / 10000.0
+        } millis per round with $arms arms and $numFeatures features")
+      }
     }
-    val end = System.currentTimeMillis()
-    logInfo(s"${(end - start)/10000.0} millis per round")
   }
 
   test("Test Simplex timings") {
@@ -128,24 +133,53 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
   }
 
   test("Test Bandit Timings") {
-    val arms = 10
-    val policy = new GaussianBayesUCBPolicy(numArms = arms, 0.25)
+    Seq(2, 2, 4, 8, 16, 32, 64).foreach { arms =>
+      val policy = new UCB1NormalPolicy(numArms = arms, 0.25)
+
+      val bestArm = 3
+
+      val rewardDist = Rand.gaussian
+
+      var i = 0
+      val start = System.currentTimeMillis()
+      while (i < 10000) {
+        val arm = policy.chooseArm(1)
+
+        //logInfo(s"$i: $arm")
+        val reward = (rewardDist.draw() - (if (arm == bestArm) 10 else 10.2)) * 0.001
+        policy.provideFeedback(arm, 1, reward)
+        i += 1
+      }
+      val end = System.currentTimeMillis()
+      logInfo(s"${(end - start) / 10000.0} millis per round with $arms arms")
+    }
+  }
+
+  test("Test Bandit Timings bayesian") {
+    val rewardDists = Seq(Rand.gaussian(10, 1000))
+    val arms = rewardDists.length
+
+    val policy = new GaussianBayesUCBPolicy(numArms = arms, 1.0)
 
     val bestArm = 3
 
-    val rewardDist = Rand.gaussian
 
+    var rewards = 0.0
     var i = 0
     val start = System.currentTimeMillis()
-    while (i < 10000) {
+    val n = 10000
+    while (i < n) {
       val arm = policy.chooseArm(1)
+      val rewardDist = rewardDists(arm)
 
-      logInfo(s"$i: $arm")
-      val reward = (rewardDist.draw() - (if (arm == bestArm) 10 else 10.2))*0.001
+      logInfo(s"$i: $arm, $rewards")
+      val reward = (rewardDist.draw() + (if (arm == bestArm) 10.2 else -100.0))
+      rewards += reward
       policy.provideFeedback(arm, 1, reward)
       i += 1
     }
     val end = System.currentTimeMillis()
     logInfo(s"${(end - start)/10000.0} millis per round")
+    logInfo(s"Mean reward: ${rewards/n}")
   }
 }
