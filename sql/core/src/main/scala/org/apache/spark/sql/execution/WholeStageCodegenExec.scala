@@ -314,6 +314,20 @@ case class WholeStageCodegenExec(child: SparkPlan) extends UnaryExecNode with Co
   override def nodeName: String = {
     var name = "WholeStageCodegen"
     child transform {
+      case s: WholeStageCodegenExec =>
+        new LeafExecNode {
+          override protected def doExecute(): RDD[InternalRow] = null
+
+          override def output: Seq[Attribute] = Seq()
+
+          override def productElement(n: Int): Any = 0
+
+          override def productArity: Int = 0
+
+          override def canEqual(that: Any): Boolean = false
+        } // Don't recurse down other code gens
+      case s => s
+    } transform {
       case s: SortMergeJoinExec =>
         name = "WholeStageCodegenWithSortMergeJoin"
         s
