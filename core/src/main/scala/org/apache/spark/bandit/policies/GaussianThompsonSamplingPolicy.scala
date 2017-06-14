@@ -33,23 +33,25 @@ private[spark] class GaussianThompsonSamplingPolicy(
                                                      numArms: Int,
                                                      varianceMultiplier: Double
                                                    ) extends BanditPolicy(numArms) {
+  @transient private lazy val tDists = (1 until 20).map(x => new TDistribution(x)).toArray
   override protected def estimateRewards(playsToMake: Int,
                                          totalRewards: Array[WeightedStats]): Seq[Double] = {
     (0 until numArms).map { arm =>
       val numPlays = totalRewards(arm).totalWeights
-      if (numPlays > 2) {
+      if (numPlays >= 2) {
         val runningVariance = totalRewards(arm).variance
 
-
-        (new TDistribution(numPlays - 1).sample()) *
-          math.sqrt(runningVariance / numPlays) +
-          totalRewards(arm).mean
-
         // Breeze expects sigma as the input to the gaussian, not the variance.
-        /*new Gaussian(
+        new Gaussian(
           totalRewards(arm).mean,
-          math.sqrt(runningVariance / numPlays)
-        ).draw()*/
+          math.sqrt(runningVariance / numPlays) * varianceMultiplier
+        ).draw()
+      } else if (numPlays >= 2) {
+        val runningVariance = totalRewards(arm).variance
+
+        (tDists(numPlays.toInt - 1).sample()) *
+          math.sqrt(runningVariance / numPlays) * varianceMultiplier +
+          totalRewards(arm).mean
       } else {
         Double.PositiveInfinity
       }
