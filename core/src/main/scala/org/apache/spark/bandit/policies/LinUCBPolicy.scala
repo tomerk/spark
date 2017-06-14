@@ -47,7 +47,7 @@ private[spark] class LinUCBPolicy(numArms: Int, numFeatures: Int, alpha: Double)
     // TODO: Should be able to optimize code by only computing coefficientEstimate after
     // updates. Would require an update to ContextualBanditPolicy to apply optimization
     // to all contextual bandits.
-    if (armRewardsStats.totalWeights > 2) {
+    if (armRewardsStats.totalWeights >= 2) {
       val coefficientEstimate = armFeaturesAcc \ armRewardsAcc
       coefficientEstimate.t * features + alpha * sqrt(
         features.t * armRewardsStats.variance * (armFeaturesAcc \ features)

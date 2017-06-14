@@ -18,7 +18,7 @@
 package org.apache.spark.bandit
 
 import breeze.linalg.{DenseMatrix, DenseVector, inv}
-import breeze.stats.distributions.{MultivariateGaussian, Rand}
+import breeze.stats.distributions.{Gamma, MultivariateGaussian, Rand}
 import org.apache.commons.math3.optim.linear._
 import org.apache.spark._
 import org.apache.spark.bandit.policies._
@@ -156,30 +156,42 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
   }
 
   test("Test Bandit Timings bayesian") {
-    val rewardDists = Seq(Rand.gaussian(10, 1000))
-    val arms = rewardDists.length
+    val rewardDists: Seq[Rand[Double]] = Seq(new Gamma(0.1, 200.0), new Gamma(0.2, 200.0), new Gamma(0.3, 200.0))
 
-    val policy = new GaussianBayesUCBPolicy(numArms = arms, 1.0)
+    /*Seq(Rand.gaussian(-10, 0), Rand.gaussian(-20, 6)), Rand.gaussian(-10, 0),
+      Rand.gaussian(-20, 6), Rand.gaussian(-10, 0), Rand.gaussian(-20, 6), Rand.gaussian(-10, 0),
+      Rand.gaussian(-20, 6), Rand.gaussian(-10, 0), Rand.gaussian(-20, 6))*/
 
-    val bestArm = 3
+    // val rewardDists = Seq(Rand.gaussian(10, 50), Rand.gaussian(20, 1000))
+    //val rewardDists = Seq(Rand.gaussian(10, 1000), Rand.gaussian(20, 50))
 
+    val numArms = rewardDists.length
 
     var rewards = 0.0
-    var i = 0
     val start = System.currentTimeMillis()
-    val n = 10000
-    while (i < n) {
-      val arm = policy.chooseArm(1)
-      val rewardDist = rewardDists(arm)
+    val n = 1000//10000
+    val numTrials = 1000
+    (0 until numTrials).foreach { trial =>
+      var i = 0
+      //val policy = new UCB1Policy(numArms, 1.0)
+      //val policy = new UCB1NormalPolicy(numArms = numArms, 0.5)
+      val policy = new GaussianThompsonSamplingPolicy(numArms = numArms, 1.0)
+      //val policy = new GaussianBayesUCBPolicy(numArms, 1.0)
 
-      logInfo(s"$i: $arm, $rewards")
-      val reward = (rewardDist.draw() + (if (arm == bestArm) 10.2 else -100.0))
-      rewards += reward
-      policy.provideFeedback(arm, 1, reward)
-      i += 1
+      while (i < n) {
+        val arm = policy.chooseArm(1)
+        val rewardDist = rewardDists(arm)
+
+        val reward = rewardDist.draw()
+        rewards += reward
+        policy.provideFeedback(arm, 1, reward)
+
+        //logInfo(s"$trial, $i: $arm, $reward, $rewards")
+        i += 1
+      }
     }
     val end = System.currentTimeMillis()
-    logInfo(s"${(end - start)/10000.0} millis per round")
-    logInfo(s"Mean reward: ${rewards/n}")
+    logInfo(s"${(end - start)/(n.toDouble * numTrials)} millis per round")
+    logInfo(s"Mean reward: ${rewards/(n.toDouble * numTrials)}")
   }
 }

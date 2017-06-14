@@ -19,7 +19,7 @@ package org.apache.spark.sql.execution.joins
 
 import org.apache.spark.TaskContext
 import org.apache.spark.bandit.Bandit
-import org.apache.spark.bandit.policies.{EpsilonGreedyPolicyParams, GaussianBayesUCBPolicyParams, UCB1NormalPolicyParams}
+import org.apache.spark.bandit.policies.{EpsilonGreedyPolicyParams, GaussianBayesUCBPolicyParams, GaussianThompsonSamplingPolicyParams, UCB1NormalPolicyParams}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, GenericInternalRow, JoinedRow, Projection, UnsafeProjection}
@@ -338,11 +338,11 @@ case class ShuffledHashOrSortMergeJoinExec(
       Seq[Attribute], Seq[Attribute]), Iterator[InternalRow]] = {
       banditMode match {
         case "both" => sparkContext.bandit (Seq (joinByHash (_),
-          joinBySort (_) ), UCB1NormalPolicyParams(0.4) )
+          joinBySort (_) ), GaussianThompsonSamplingPolicyParams() )
         case "sort" => sparkContext.bandit (Seq (joinBySort (_)),
-          UCB1NormalPolicyParams(0.4) )
+          GaussianThompsonSamplingPolicyParams() )
         case "hash" => sparkContext.bandit (Seq (joinByHash (_)),
-          UCB1NormalPolicyParams(0.4) )
+          GaussianThompsonSamplingPolicyParams() )
       }
     }
 
