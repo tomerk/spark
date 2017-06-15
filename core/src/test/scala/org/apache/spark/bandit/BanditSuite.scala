@@ -17,6 +17,8 @@
 
 package org.apache.spark.bandit
 
+import java.io.{BufferedWriter, FileOutputStream, OutputStreamWriter}
+
 import breeze.linalg.{DenseMatrix, DenseVector, inv}
 import breeze.stats.distributions.{Gamma, MultivariateGaussian, Rand}
 import org.apache.commons.math3.optim.linear._
@@ -156,9 +158,9 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
   }
 
   test("Test Bandit Timings bayesian") {
-    val rewardDists: Seq[Rand[Double]] = Seq(new Gamma(0.1, 200.0), new Gamma(0.2, 200.0), new Gamma(0.3, 200.0))
+    //val rewardDists: Seq[Rand[Double]] = Seq(new Gamma(0.1, 200.0), new Gamma(0.2, 200.0), new Gamma(0.25, 200.0), new Gamma(0.29, 200.0), new Gamma(0.3, 200.0))
 
-    /*Seq(Rand.gaussian(-10, 0), Rand.gaussian(-20, 6)), Rand.gaussian(-10, 0),
+    val rewardDists: Seq[Rand[Double]] = (0 until 10).flatMap(x => Seq(Rand.gaussian(-10, 6), Rand.gaussian(-20, 6)))/*, Rand.gaussian(-10, 0),
       Rand.gaussian(-20, 6), Rand.gaussian(-10, 0), Rand.gaussian(-20, 6), Rand.gaussian(-10, 0),
       Rand.gaussian(-20, 6), Rand.gaussian(-10, 0), Rand.gaussian(-20, 6))*/
 
@@ -170,15 +172,15 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
     var rewards = 0.0
     val start = System.currentTimeMillis()
     val n = 1000//10000
-    val numTrials = 1000
-    (0 until numTrials).foreach { trial =>
-      var i = 0
+    val numTrials = 100
+    val banditResults = (0 until numTrials).flatMap { trial =>
+      val policy = new UCB1Policy(numArms, 1.0)
       //val policy = new UCB1Policy(numArms, 1.0)
       //val policy = new UCB1NormalPolicy(numArms = numArms, 0.5)
-      val policy = new GaussianThompsonSamplingPolicy(numArms = numArms, 1.0)
+      //val policy = new GaussianThompsonSamplingPolicy(numArms = numArms, 1.0)
       //val policy = new GaussianBayesUCBPolicy(numArms, 1.0)
 
-      while (i < n) {
+      (0 until n).map { i =>
         val arm = policy.chooseArm(1)
         val rewardDist = rewardDists(arm)
 
@@ -186,12 +188,78 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
         rewards += reward
         policy.provideFeedback(arm, 1, reward)
 
-        //logInfo(s"$trial, $i: $arm, $reward, $rewards")
-        i += 1
+        s"$trial,$i,$arm,$reward"
       }
     }
     val end = System.currentTimeMillis()
+
+    val writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(
+      s"/Users/tomerk11/Desktop/tests/${System.currentTimeMillis()}.csv")))
+    writer.write(s"trial,step,arm,reward\n")
+
+    for (x <- banditResults) {
+      writer.write(x + "\n")
+    }
+    writer.close()
+
     logInfo(s"${(end - start)/(n.toDouble * numTrials)} millis per round")
     logInfo(s"Mean reward: ${rewards/(n.toDouble * numTrials)}")
   }
+
+  test("Test Bandit Timings batches") {
+    val rewardDists: Seq[Rand[Double]] = Seq(new Gamma(0.1, 200.0), new Gamma(0.2, 200.0), new Gamma(0.25, 200.0), new Gamma(0.29, 200.0), new Gamma(0.3, 200.0))
+
+    //val rewardDists: Seq[Rand[Double]] = (0 until 10).flatMap(x => Seq(Rand.gaussian(-10, 6), Rand.gaussian(-20, 6)))
+
+    // val rewardDists = Seq(Rand.gaussian(10, 50), Rand.gaussian(20, 1000))
+    //val rewardDists = Seq(Rand.gaussian(10, 1000), Rand.gaussian(20, 50))
+
+    val numArms = rewardDists.length
+
+    var rewards = 0.0
+    val start = System.currentTimeMillis()
+    val n = 1000
+    val batchSize = 1
+    val numTrials = 100
+    val banditResults = (1 to 10).flatMap {
+      batchSize =>
+        val numBatches = n / batchSize
+      (0 until numTrials).flatMap { trial =>
+        //val policy = new UCB1Policy(numArms, 1.0)
+        //val policy = new UCB1Policy(numArms, 1.0)
+        //val policy = new UCB1NormalPolicy(numArms = numArms, 0.5)
+        val policy = new GaussianThompsonSamplingPolicy(numArms = numArms, 1.0)
+        //val policy = new EpsilonDecreasingPolicy(numArms = numArms, 5.0 / batchSize)
+        //val policy = new GaussianBayesUCBPolicy(numArms, 1.0)
+
+        (0 until numBatches).flatMap { i =>
+          val arm = policy.chooseArm(1)//batchSize)
+        val rewardDist = rewardDists(arm)
+
+          val rewardList = (0 until batchSize).map(_ => rewardDist.draw())
+          rewards += rewardList.sum/rewardList.length
+          policy.provideFeedback(arm, 1, rewardList.sum/rewardList.length)
+
+          //logInfo(s"$trial,${i * batchSize},$arm")
+          rewardList.zipWithIndex.map { case (reward, batchIndex) =>
+            s"$trial,${i * batchSize + batchIndex},$batchSize,$arm,$reward"
+          }
+        }
+      }
+    }
+    val end = System.currentTimeMillis()
+
+    val writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(
+      s"/Users/tomerk11/Desktop/tests/${System.currentTimeMillis()}.csv")))
+    writer.write(s"trial,step,batchSize,arm,reward\n")
+
+    for (x <- banditResults) {
+      writer.write(x + "\n")
+    }
+    writer.close()
+
+    //logInfo(s"${(end - start)/(numBatches.toDouble * numTrials * batchSize)} millis per round")
+    //logInfo(s"Mean reward: ${rewards/(numBatches.toDouble * numTrials * batchSize)}")
+  }
+
 }
