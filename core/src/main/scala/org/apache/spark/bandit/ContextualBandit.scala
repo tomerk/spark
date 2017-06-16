@@ -139,18 +139,20 @@ class ContextualBandit[A: ClassTag, B: ClassTag] private[spark] (val id: Long,
 
     val policy = banditManager.registerOrLoadPolicy(id, threadId, initPolicy)
 
-    // Because our contextual models our linear, the features is just over the individal inputs
-    val features = in.map(featureExtractor).reduce(_ + _)
+    // Because our contextual models our linear, the features is just over the individual inputs
+    val features = in.map(featureExtractor).reduce(_ + _) / in.length.toDouble
     val arm = policy.chooseArm(features)
-    val rewards = new WeightedStats()
 
+    var sumRewards: Long = 0L
     val seqResult = in.map { x =>
       val startTime = System.nanoTime()
       val result = arms(arm).apply(x)
       val endTime = System.nanoTime()
-      rewards.add(startTime - endTime)
+      sumRewards += startTime - endTime
       result
     }
+
+    val rewards = new WeightedStats().add(sumRewards / in.length.toDouble)
 
     // Intentionally provide -1 * elapsed time as the reward, so it's better to be faster
     banditManager.provideContextualFeedback(id, threadId, arm, features, rewards)

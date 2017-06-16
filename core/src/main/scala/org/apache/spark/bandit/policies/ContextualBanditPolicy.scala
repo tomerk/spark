@@ -63,7 +63,7 @@ abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) ex
 
   def chooseArm(features: DenseVector[Double]): Int = {
     val rewards = estimateRewards(features)
-    logError(s"$features: $rewards")
+    //logError(s"$features: $rewards")
     val maxReward = rewards.max
     val bestArms = rewards.zipWithIndex.filter(_._1 == maxReward)
     bestArms(scala.util.Random.nextInt(bestArms.length))._2
