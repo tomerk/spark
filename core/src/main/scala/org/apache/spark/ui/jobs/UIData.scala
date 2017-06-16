@@ -167,7 +167,8 @@ private[spark] object UIData {
         executorId = weakIntern(taskInfo.executorId),
         host = weakIntern(taskInfo.host),
         taskLocality = taskInfo.taskLocality,
-        speculative = taskInfo.speculative
+        speculative = taskInfo.speculative,
+        partitionId = taskInfo.partitionId
       )
       newTaskInfo.gettingResultTime = taskInfo.gettingResultTime
       newTaskInfo.setAccumulables(taskInfo.accumulables.filter {
