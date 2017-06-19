@@ -47,7 +47,9 @@ import scala.runtime.ScalaRunTime
 private[spark] class LinThompsonSamplingPolicy(numArms: Int,
                                                numFeatures: Int,
                                                v: Double,
-                                               useCholesky: Boolean)
+                                               useCholesky: Boolean,
+                                               usingBias: Boolean,
+                                               regParam: Double = 1e-3)
   extends ContextualBanditPolicy(numArms, numFeatures) {
   override protected def estimateRewards(features: DenseVector[Double],
                                          armFeaturesAcc: DenseMatrix[Double],
@@ -58,11 +60,23 @@ private[spark] class LinThompsonSamplingPolicy(numArms: Int,
     // to all contextual bandits.
     if (armRewardsStats.totalWeights >= 2) {
 
-      val coefficientMean = armFeaturesAcc \ armRewardsAcc
+      val currArmFeaturesAcc = armFeaturesAcc - DenseMatrix.eye[Double](numFeatures)
+      val regValue = sum(diag(currArmFeaturesAcc))*regParam
+
+      val regVec = DenseVector.fill(numFeatures)(regValue) / numFeatures.toDouble
+
+      if (usingBias) {
+        regVec(0) = 0.0
+      }
+
+      currArmFeaturesAcc += diag(regVec)
+
+
+      val coefficientMean = currArmFeaturesAcc \ armRewardsAcc
       val coefficientDist = InverseCovarianceMultivariateGaussian(
         coefficientMean,
         // We divide because this is the inverse covariance
-        armFeaturesAcc / (v * armRewardsStats.variance),
+        currArmFeaturesAcc / (v * numFeatures * armRewardsStats.variance),
         useCholesky = useCholesky)
       val coefficientSample = coefficientDist.draw()
 
