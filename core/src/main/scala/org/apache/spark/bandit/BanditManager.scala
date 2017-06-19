@@ -609,8 +609,9 @@ private[spark] class BanditManager(
         new ContextualEpsilonGreedyPolicy(numArms = arms.length, numFeatures, epsilon)
       case ContextualEpsilonFirstPolicyParams(numFeatures, epsilon) =>
         new ContextualEpsilonFirstPolicy(numArms = arms.length, numFeatures, epsilon)
-      case LinThompsonSamplingPolicyParams(numFeatures, v, useCholesky) =>
-        new LinThompsonSamplingPolicy(numArms = arms.length, numFeatures, v, useCholesky)
+      case LinThompsonSamplingPolicyParams(numFeatures, v, useCholesky, usingBias, regParam) =>
+        new LinThompsonSamplingPolicy(numArms = arms.length, numFeatures, v, useCholesky,
+          usingBias, regParam)
       case LinUCBPolicyParams(numFeatures, alpha) =>
         new LinUCBPolicy(numArms = arms.length, numFeatures, alpha)
     }

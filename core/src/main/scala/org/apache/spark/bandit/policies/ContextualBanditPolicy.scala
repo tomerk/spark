@@ -33,7 +33,9 @@ case class LinUCBPolicyParams(numFeatures: Int, alpha: Double = 2.36)
   extends ContextualBanditPolicyParams
 case class LinThompsonSamplingPolicyParams(numFeatures: Int,
                                            v: Double = 5.0,
-                                           useCholesky: Boolean = false)
+                                           useCholesky: Boolean = false,
+                                           usingBias: Boolean = false,
+                                           regParam: Double = 1e-3)
   extends ContextualBanditPolicyParams
 
 abstract class ContextualBanditPolicy(val numArms: Int, val numFeatures: Int) extends Serializable
