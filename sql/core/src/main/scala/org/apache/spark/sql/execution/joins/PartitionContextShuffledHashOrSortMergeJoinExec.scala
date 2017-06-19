@@ -21,7 +21,9 @@ import breeze.linalg.DenseVector
 import org.apache.spark.TaskContext
 import org.apache.spark.bandit.{Bandit, BanditTrait, ContextualBandit}
 import org.apache.spark.bandit.policies.{LinThompsonSamplingPolicyParams, UCB1NormalPolicyParams}
+import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.{SQLContext, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, GenericInternalRow, JoinedRow, UnsafeProjection}
 import org.apache.spark.sql.catalyst.plans._
@@ -336,20 +338,7 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
   }
 
   protected override def doExecute(): RDD[InternalRow] = {
-    val banditMode = sqlContext.sparkSession.conf.get(
-      "spark.sql.join.bandit.shuffleSortHash", "both")
-    logError(banditMode)
-    val hashOrJoinBandit: BanditTrait[(Array[InternalRow], Array[InternalRow], SQLMetric,
-      Seq[Attribute], Seq[Attribute]), Iterator[InternalRow]] = {
-      banditMode match {
-        case "both" => sparkContext.contextualBandit(Seq (joinByHash (_),
-          joinBySort (_) ), features, LinThompsonSamplingPolicyParams(4, 1.0, true) )
-        case "sort" => sparkContext.bandit (Seq (joinBySort (_)),
-          UCB1NormalPolicyParams(0.4) )
-        case "hash" => sparkContext.bandit (Seq (joinByHash (_)),
-          UCB1NormalPolicyParams(0.4) )
-      }
-    }
+    val bandit = GlobalContextJoinBandit.getBandit(sqlContext)
 
     val numOutputRows = longMetric("numOutputRows")
     val (leftOutput, rightOutput) = (left.output, right.output)
@@ -366,8 +355,19 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
       //logError(s"Left: ${leftList.size}, Right: ${rightList.size}")
 
       val startTime = System.nanoTime()
-      val (result, delayedFeedback) = hashOrJoinBandit.applyAndDelayFeedback(
-        (leftList, rightList, numOutputRows, leftOutput, rightOutput))
+      val (result, delayedFeedback) = {
+        val (action, delayedFeedback) = bandit.applyAndDelayFeedback(
+          (leftList, rightList, numOutputRows, leftOutput, rightOutput))
+
+        val result = action match {
+          case UseSort => joinBySort((leftList, rightList, numOutputRows,
+            leftOutput, rightOutput))
+          case UseHash => joinByHash((leftList, rightList, numOutputRows,
+            leftOutput, rightOutput))
+        }
+
+        (result, delayedFeedback)
+      }
 
       context.addTaskCompletionListener(_ => {
         val endTime = System.nanoTime()
@@ -380,6 +380,55 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
       })
       result
     }
+  }
+
+}
+
+
+sealed trait HashOrJoin
+case object UseHash extends HashOrJoin
+case object UseSort extends HashOrJoin
+
+object GlobalContextJoinBandit extends Serializable with Logging {
+  def returnHash(x: Any): HashOrJoin = {
+    //logInfo("Returning hash!")
+    UseHash
+  }
+  def returnSort(x: Any): HashOrJoin = {
+    //logInfo("Returning sort!")
+    UseSort
+  }
+
+  @transient private var bandit: BanditTrait[(Array[InternalRow],
+    Array[InternalRow], SQLMetric,
+    Seq[Attribute], Seq[Attribute]), HashOrJoin] = null
+
+  def features(in: (Array[InternalRow], Array[InternalRow], SQLMetric,
+    Seq[Attribute], Seq[Attribute])): DenseVector[Double] = {
+    DenseVector(1.0, in._1.length, in._2.length, in._1.length * in._2.length)
+  }
+
+  def getBandit(sqlContext: SQLContext): BanditTrait[(Array[InternalRow],
+    Array[InternalRow], SQLMetric,
+    Seq[Attribute], Seq[Attribute]), HashOrJoin] = {
+    if (bandit == null) {
+      val sc = sqlContext.sparkContext
+      val banditMode = sqlContext.sparkSession.conf.get(
+        "spark.sql.join.bandit.shuffleSortHash", "both")
+      logError(banditMode)
+      bandit = {
+        banditMode match {
+          case "both" => sc.contextualBandit(Seq (returnSort(_), returnHash(_)
+          ), features, LinThompsonSamplingPolicyParams(4, 1.0, useCholesky = true) )
+          case "sort" => sc.bandit (Seq (returnSort (_)),
+            UCB1NormalPolicyParams(0.4) )
+          case "hash" => sc.bandit (Seq (returnHash(_)),
+            UCB1NormalPolicyParams(0.4) )
+        }
+      }
+    }
+
+    bandit
   }
 
 }
