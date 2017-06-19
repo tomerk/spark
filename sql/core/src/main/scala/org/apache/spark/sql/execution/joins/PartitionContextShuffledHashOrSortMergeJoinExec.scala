@@ -391,11 +391,11 @@ case object UseSort extends HashOrJoin
 
 object GlobalContextJoinBandit extends Serializable with Logging {
   def returnHash(x: Any): HashOrJoin = {
-    //logInfo("Returning hash!")
+    //logError("Returning hash!")
     UseHash
   }
   def returnSort(x: Any): HashOrJoin = {
-    //logInfo("Returning sort!")
+    //logError("Returning sort!")
     UseSort
   }
 
