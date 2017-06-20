@@ -40,6 +40,7 @@ private[spark] class ContextualEpsilonFirstPolicy(numArms: Int, numFeatures: Int
 
   override protected def estimateRewards(features: DenseVector[Double],
                                          armFeaturesAcc: DenseMatrix[Double],
+                                         armFeatureSumAcc: DenseVector[Double],
                                          armRewardsAcc: DenseVector[Double],
                                          armRewardStatsAcc: WeightedStats): Double = {
     // Note: Unplayed arms will default to zero reward. Fine
