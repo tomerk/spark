@@ -419,7 +419,7 @@ object GlobalContextJoinBandit extends Serializable with Logging {
       bandit = {
         banditMode match {
           case "both" => sc.contextualBandit(Seq (returnSort(_), returnHash(_)
-          ), features, LinThompsonSamplingPolicyParams(4, 1.0, useCholesky = true) )
+          ), features(_), LinThompsonSamplingPolicyParams(4, 1.0, useCholesky = true) )
           case "sort" => sc.bandit (Seq (returnSort (_)),
             UCB1NormalPolicyParams(0.4) )
           case "hash" => sc.bandit (Seq (returnHash(_)),
