@@ -42,7 +42,7 @@ import org.apache.hadoop.mapred.{FileInputFormat, InputFormat, JobConf, Sequence
 import org.apache.hadoop.mapreduce.{InputFormat => NewInputFormat, Job => NewHadoopJob}
 import org.apache.hadoop.mapreduce.lib.input.{FileInputFormat => NewFileInputFormat}
 import org.apache.spark.annotation.DeveloperApi
-import org.apache.spark.bandit.policies.{BanditPolicyParams, ContextualBanditPolicyParams}
+import org.apache.spark.bandit.policies.{BanditPolicy, BanditPolicyParams, ContextualBanditPolicy, ContextualBanditPolicyParams}
 import org.apache.spark.bandit.{Bandit, ContextualBandit}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.deploy.{LocalSparkCluster, SparkHadoopUtil}
@@ -1435,6 +1435,24 @@ class SparkContext(config: SparkConf) extends Logging {
   }
 
   /**
+   * Creates a new bandit.
+   *
+   * @param arms The arms to choose between
+   * @param policy The learning policy to use
+   */
+  def bandit[A: ClassTag, B: ClassTag](arms: Seq[A => B],
+                                       policy: BanditPolicy): Bandit[A, B] = {
+    assertNotStopped()
+    val cleanedArms = arms.map(arm => clean(arm))
+    val bandit = env.banditManager.newBandit[A, B](cleanedArms, policy, isLocal)
+    val callSite = getCallSite
+    logInfo("Created bandit " + bandit.id + " from " + callSite.shortForm)
+    cleaner.foreach(_.registerBanditForCleanup(bandit))
+    bandit
+  }
+
+
+  /**
    * Creates a new contextual bandit.
    *
    * @param arms The arms to choose between
@@ -1443,6 +1461,31 @@ class SparkContext(config: SparkConf) extends Logging {
   def contextualBandit[A: ClassTag, B: ClassTag](arms: Seq[A => B],
                                                  features: A => DenseVector[Double],
                                                  policy: ContextualBanditPolicyParams
+                                                ): ContextualBandit[A, B] = {
+    assertNotStopped()
+    val cleanedArms = arms.map(arm => clean(arm))
+    val cleanedFeatures = clean(features)
+    val bandit = env.banditManager.newContextualBandit[A, B](
+      cleanedArms,
+      cleanedFeatures,
+      policy,
+      isLocal
+    )
+    val callSite = getCallSite
+    logInfo("Created bandit " + bandit.id + " from " + callSite.shortForm)
+    cleaner.foreach(_.registerContextualBanditForCleanup(bandit))
+    bandit
+  }
+
+  /**
+   * Creates a new contextual bandit.
+   *
+   * @param arms The arms to choose between
+   * @param policy The learning policy to use
+   */
+  def contextualBandit[A: ClassTag, B: ClassTag](arms: Seq[A => B],
+                                                 features: A => DenseVector[Double],
+                                                 policy: ContextualBanditPolicy
                                                 ): ContextualBandit[A, B] = {
     assertNotStopped()
     val cleanedArms = arms.map(arm => clean(arm))

@@ -588,6 +588,12 @@ private[spark] class BanditManager(
         new GaussianBayesUCBPolicy(numArms = arms.length, boundsConst = range)
     }
 
+    newBandit(arms, policy, isLocal)
+  }
+
+  def newBandit[A: ClassTag, B: ClassTag](arms: Seq[A => B],
+                                          policy: BanditPolicy,
+                                          isLocal: Boolean): Bandit[A, B] = {
     val id = nextBanditId.getAndIncrement()
     new Bandit(id, arms, policy)
   }
@@ -616,6 +622,13 @@ private[spark] class BanditManager(
         new LinUCBPolicy(numArms = arms.length, numFeatures, alpha)
     }
 
+    newContextualBandit(arms, features, policy, isLocal)
+  }
+
+  def newContextualBandit[A: ClassTag, B: ClassTag](arms: Seq[A => B],
+                                                    features: A => DenseVector[Double],
+                                                    policy: ContextualBanditPolicy,
+                                                    isLocal: Boolean): ContextualBandit[A, B] = {
     val id = nextBanditId.getAndIncrement()
     new ContextualBandit(id, arms, features, policy)
   }
