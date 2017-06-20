@@ -302,9 +302,9 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
           //val policy = new UCB1Policy(numArms, 1.0)
           //val policy = new UCB1Policy(numArms, 1.0)
           //val policy = new UCB1NormalPolicy(numArms = numArms, 0.5)
-          /*val policy = new LinThompsonSamplingPolicy(numFeatures = numFeatures,
-            numArms = numArms, v = 1.0, useCholesky = true)*/
-          val policy = new GaussianThompsonSamplingPolicy(numArms = numArms, 1.0)
+          val policy = new LinThompsonSamplingPolicy(numFeatures = numFeatures,
+            numArms = numArms, v = 1.0, useCholesky = true, usingBias = false)
+          //val policy = new GaussianThompsonSamplingPolicy(numArms = numArms, 1.0)
 
           //val policy = new EpsilonDecreasingPolicy(numArms = numArms, 5.0 / batchSize)
           //val policy = new GaussianBayesUCBPolicy(numArms, 1.0)
@@ -313,7 +313,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
             val features = (0 until batchSize).map(_ => genFeatures())
             val avgFeature = features.reduce(_ + _) / batchSize.toDouble
 
-            val arm = policy.chooseArm(1)//avgFeature)
+            val arm = policy.chooseArm(avgFeature)
             val rewardDist = rewardDists(arm)
             val armWeights = weights(arm)
 
@@ -321,10 +321,10 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
               features(batchIndex).dot(armWeights) + rewardDist.draw()
             }
             rewards += rewardList.sum
-            policy.provideFeedback(arm, 1, rewardList.sum/rewardList.length)
+            //policy.provideFeedback(arm, 1, rewardList.sum/rewardList.length)
 
-            /*policy.provideFeedback(arm, avgFeature, new WeightedStats().add(
-              rewardList.sum/rewardList.length))*/
+            policy.provideFeedback(arm, avgFeature, new WeightedStats().add(
+              rewardList.sum/rewardList.length))
 
             //logInfo(s"$trial,${i * batchSize},$arm")
             rewardList.zipWithIndex.map { case (reward, batchIndex) =>

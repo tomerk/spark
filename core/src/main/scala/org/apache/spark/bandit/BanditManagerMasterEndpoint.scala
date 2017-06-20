@@ -29,6 +29,7 @@ sealed trait BanditUpdate
 case class ContextualBanditUpdate(banditId: Long,
                                   threadId: Long,
                                   features: Array[DenseMatrix[Double]],
+                                  featureSum: Array[DenseVector[Double]],
                                   rewards: Array[DenseVector[Double]],
                                   rewardStats: Array[WeightedStats],
                                   weights: Array[DenseVector[Double]]
@@ -63,7 +64,7 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, co
     mutable.Map[(String, Long), Array[WeightedStats]]]()
   private val executorContextualStates = mutable.Map[Long,
     mutable.Map[(String, Long), (Array[DenseMatrix[Double]], Array[DenseVector[Double]],
-      Array[WeightedStats], Array[DenseVector[Double]])]]()
+      Array[DenseVector[Double]], Array[WeightedStats], Array[DenseVector[Double]])]]()
 
   override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
     case SendLocalUpdates(executorId, localUpdates) =>
@@ -121,10 +122,12 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, co
           // Return the observations to use from the clustered partitions
           MABBanditUpdate(id, threadId, responseRewards)
 
-        case ContextualBanditUpdate(id, threadId, features, rewards, rewardStats, weights) =>
+        case ContextualBanditUpdate(id, threadId, features, featureSum,
+        rewards, rewardStats, weights) =>
           // Store these observations
           val executorState = executorContextualStates.getOrElseUpdate(id, mutable.Map())
-          executorState.put((executorId, threadId), (features, rewards, rewardStats, weights))
+          executorState.put((executorId, threadId), (features, featureSum,
+            rewards, rewardStats, weights))
 
           // Cluster observations from other partitions that could share the same reward
           // distribution, in order to merge w/ the local partition data
@@ -133,18 +136,21 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, co
           val responseObservations = (
             Array.fill(arms)(DenseMatrix.zeros[Double](numFeatures, numFeatures)),
             Array.fill(arms)(DenseVector.zeros[Double](numFeatures)),
+            Array.fill(arms)(DenseVector.zeros[Double](numFeatures)),
             Array.fill(arms)(new WeightedStats()))
 
           val otherStates = executorState.filterNot(_._1 == (executorId, threadId))
           for (executor <- otherStates) {
-            val (otherFeatures, otherRewards, otherRewardStats, otherWeights) = executor._2
+            val (otherFeatures, otherFeatureSum,
+            otherRewards, otherRewardStats, otherWeights) = executor._2
             val eye = DenseMatrix.eye[Double](numFeatures)
             for (i <- 0 until arms) {
               if (alwaysShare) {
                 // Cluster these observations
                 responseObservations._1(i) = responseObservations._1(i) + otherFeatures(i)
-                responseObservations._2(i) = responseObservations._2(i) + otherRewards(i)
-                responseObservations._3(i).merge(otherRewardStats(i))
+                responseObservations._2(i) = responseObservations._2(i) + otherFeatureSum(i)
+                responseObservations._3(i) = responseObservations._3(i) + otherRewards(i)
+                responseObservations._4(i).merge(otherRewardStats(i))
               } else if (contextCombinedWeights) {
                 if (rewardStats(i).totalWeights >= minClusterExamples &&
                   otherRewardStats(i).totalWeights >= minClusterExamples) {
@@ -194,8 +200,9 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, co
                   // Cluster these observations if the results didn't get much worse
                   if ((baseSSEExplained - combinedSSEExplained) < cb) {
                     responseObservations._1(i) = responseObservations._1(i) + otherFeatures(i)
-                    responseObservations._2(i) = responseObservations._2(i) + otherRewards(i)
-                    responseObservations._3(i).merge(otherRewardStats(i))
+                    responseObservations._2(i) = responseObservations._2(i) + otherFeatureSum(i)
+                    responseObservations._3(i) = responseObservations._3(i) + otherRewards(i)
+                    responseObservations._4(i).merge(otherRewardStats(i))
                   }
                 }
               } else {
@@ -227,8 +234,9 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, co
                   // the confidence bounds
                   if (meanDiff < cb + otherCb) {
                     responseObservations._1(i) = responseObservations._1(i) + otherFeatures(i)
-                    responseObservations._2(i) = responseObservations._2(i) + otherRewards(i)
-                    responseObservations._3(i).merge(otherRewardStats(i))
+                    responseObservations._2(i) = responseObservations._2(i) + otherFeatureSum(i)
+                    responseObservations._3(i) = responseObservations._3(i) + otherRewards(i)
+                    responseObservations._4(i).merge(otherRewardStats(i))
                   }
                 }
               }
@@ -240,7 +248,8 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, co
             threadId,
             responseObservations._1,
             responseObservations._2,
-            responseObservations._3, weights)
+            responseObservations._3,
+            responseObservations._4, weights)
       }
 
       context.reply(SendDistributedUpdates(responses))

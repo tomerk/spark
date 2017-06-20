@@ -64,8 +64,10 @@ private[spark] class BanditManager(
       (ContextualBanditPolicy,
         (Array[DenseMatrix[Double]],
           Array[DenseVector[Double]],
+          Array[DenseVector[Double]],
           Array[WeightedStats]),
         (Array[DenseMatrix[Double]],
+            Array[DenseVector[Double]],
             Array[DenseVector[Double]],
             Array[WeightedStats]))]()
   private val updatedBandits = mutable.Set[(Long, Long)]()
@@ -176,8 +178,10 @@ private[spark] class BanditManager(
                   }
                 } else {
                   val (policy,
-                  (recentFeatures, recentRewards, recentRewardStats),
-                  (oldFeatures, oldRewards, oldRewardStats)) = {
+                  (recentFeatures, recentFeatureSum,
+                  recentRewards, recentRewardStats),
+                  (oldFeatures, oldFeatureSum,
+                  oldRewards, oldRewardStats)) = {
                     contextualPolicies.get((id, threadId))
                   }
 
@@ -243,10 +247,12 @@ private[spark] class BanditManager(
                             if ((baseSSEExplained - combinedSSEExplained) > cb) {
                               resetAnyArms = true
                               oldFeatures(i) = recentFeatures(i)
+                              oldFeatureSum(i) = recentFeatureSum(i)
                               oldRewards(i) = recentRewards(i)
                               oldRewardStats(i) = recentRewardStats(i)
                             } else {
                               oldFeatures(i) = recentFeatures(i) + oldFeatures(i)
+                              oldFeatureSum(i) = recentFeatureSum(i) + oldFeatureSum(i)
                               oldRewards(i) = recentRewards(i) + oldRewards(i)
                               oldRewardStats(i).merge(recentRewardStats(i))
                             }
@@ -279,22 +285,26 @@ private[spark] class BanditManager(
                             if (meanDiff > cb + otherCb) {
                               resetAnyArms = true
                               oldFeatures(i) = recentFeatures(i)
+                              oldFeatureSum(i) = recentFeatureSum(i)
                               oldRewards(i) = recentRewards(i)
                               oldRewardStats(i) = recentRewardStats(i)
                             } else {
                               oldFeatures(i) = recentFeatures(i) + oldFeatures(i)
+                              oldFeatureSum(i) = recentFeatureSum(i) + oldFeatureSum(i)
                               oldRewards(i) = recentRewards(i) + oldRewards(i)
                               oldRewardStats(i).merge(recentRewardStats(i))
                             }
                           }
                         } else {
                           oldFeatures(i) = recentFeatures(i) + oldFeatures(i)
+                          oldFeatureSum(i) = recentFeatureSum(i) + oldFeatureSum(i)
                           oldRewards(i) = recentRewards(i) + oldRewards(i)
                           oldRewardStats(i).merge(recentRewardStats(i))
                         }
 
                         // Then reset the recent observations tracker
                         recentFeatures(i) = DenseMatrix.zeros(numFeatures, numFeatures)
+                        recentFeatureSum(i) = DenseVector.zeros(numFeatures)
                         recentRewards(i) = DenseVector.zeros(numFeatures)
                         recentRewardStats(i) = new WeightedStats()
                       }
@@ -308,6 +318,7 @@ private[spark] class BanditManager(
                           val numFeatures = recentFeatures(i).rows
 
                           oldFeatures(i) = DenseMatrix.zeros(numFeatures, numFeatures)
+                          oldFeatureSum(i) = DenseVector.zeros(numFeatures)
                           oldRewards(i) = DenseVector.zeros(numFeatures)
                           oldRewardStats(i) = new WeightedStats()
                         }
@@ -346,13 +357,15 @@ private[spark] class BanditManager(
                   }
                 } else {
                   val (policy,
-                  (localFeatures, localRewards, localRewardStats),
-                  (oldLocalFeatures, oldLocalRewards, oldLocalRewardStats)) = {
+                  (localFeatures, localFeatureSum, localRewards, localRewardStats),
+                  (oldLocalFeatures, oldLocalFeatureSum,
+                  oldLocalRewards, oldLocalRewardStats)) = {
                     contextualPolicies.get((id, threadId))
                   }
-                  val (f, r, rs) = policy.stateLock.synchronized {
+                  val (f, fs, r, rs) = policy.stateLock.synchronized {
                     (
                       localFeatures.zip(oldLocalFeatures).map(x => x._1 + x._2),
+                      localFeatureSum.zip(oldLocalFeatureSum).map(x => x._1 + x._2),
                       localRewards.zip(oldLocalRewards).map(x => x._1 + x._2),
                       localRewardStats.zip(oldLocalRewardStats).map(x => x._1.copy().merge(x._2)))
                   }
@@ -366,6 +379,7 @@ private[spark] class BanditManager(
                   ContextualBanditUpdate(id,
                     threadId,
                     f,
+                    fs,
                     r,
                     rs,
                   weights = weights)
@@ -382,11 +396,13 @@ private[spark] class BanditManager(
                       id,
                       threadId,
                       features,
+                      featureSum,
                       rewards,
                       rewardStats,
                       _) =>
                         mergeDistributedContextualFeedback(
-                          id, threadId, features, rewards, rewardStats)
+                          id, threadId, features, featureSum,
+                          rewards, rewardStats)
                       case MABBanditUpdate(id, threadId, rewards) =>
                         mergeDistributedFeedback(id, threadId, rewards)
                     }
@@ -439,6 +455,10 @@ private[spark] class BanditManager(
         DenseMatrix.zeros(policy.numFeatures, policy.numFeatures)
       }
 
+      val initFeatureSum: Array[DenseVector[Double]] = Array.fill(policy.numArms) {
+        DenseVector.zeros(policy.numFeatures)
+      }
+
       val initRewards: Array[DenseVector[Double]] = Array.fill(policy.numArms) {
         DenseVector.zeros(policy.numFeatures)
       }
@@ -451,6 +471,10 @@ private[spark] class BanditManager(
         DenseMatrix.zeros(policy.numFeatures, policy.numFeatures)
       }
 
+      val initOldFeatureSum: Array[DenseVector[Double]] = Array.fill(policy.numArms) {
+        DenseVector.zeros(policy.numFeatures)
+      }
+
       val initOldRewards: Array[DenseVector[Double]] = Array.fill(policy.numArms) {
         DenseVector.zeros(policy.numFeatures)
       }
@@ -460,8 +484,8 @@ private[spark] class BanditManager(
       }
 
       contextualPolicies.putIfAbsent((id, threadId), (policy,
-        (initFeatures, initRewards, initRewardStats),
-        (initOldFeatures, initOldRewards, initOldRewardStats)))
+        (initFeatures, initFeatureSum, initRewards, initRewardStats),
+        (initOldFeatures, initOldFeatureSum, initOldRewards, initOldRewardStats)))
 
       policyAtId = contextualPolicies.get((id, threadId))
     }
@@ -508,16 +532,19 @@ private[spark] class BanditManager(
                                 arm: Int,
                                 features: DenseVector[Double],
                                 rewardStats: WeightedStats): Unit = {
-    val (policy, (localFeatures, localRewards, localRewardStats), _) = {
+    val (policy, (localFeatures, localFeatureSum,
+    localRewards, localRewardStats), _) = {
       contextualPolicies.get((id, threadId))
     }
     // Note that this assumes all weights are 1
     val xxT = features * features.t
+    val x = features
     val rx = rewardStats.count * rewardStats.mean * features
 
     policy.stateLock.synchronized {
-      policy.provideFeedback(arm, xxT, rx, rewardStats)
+      policy.provideFeedback(arm, xxT, x, rx, rewardStats)
       localFeatures(arm) = localFeatures(arm) + xxT
+      localFeatureSum(arm) = localFeatureSum(arm) + x
       localRewards(arm) = localRewards(arm) + rx
       localRewardStats(arm).merge(rewardStats)
     }
@@ -533,13 +560,14 @@ private[spark] class BanditManager(
   def mergeDistributedContextualFeedback(id: Long,
                                          threadId: Long,
                                          features: Array[DenseMatrix[Double]],
+                                         featureSum: Array[DenseVector[Double]],
                                          rewards: Array[DenseVector[Double]],
                                          rewardStats: Array[WeightedStats]): Unit = {
     logInfo(s"feedback: $id, ${features.toSeq} ${rewards.toSeq}")
 
     val (policy,
-    (localFeatures, localRewards, localRewardStats),
-    (oldLocalFeatures, oldLocalRewards, oldLocalRewardStats)) = {
+    (localFeatures, localFeatureSum, localRewards, localRewardStats),
+    (oldLocalFeatures, oldLocalFeatureSum, oldLocalRewards, oldLocalRewardStats)) = {
       contextualPolicies.get((id, threadId))
     }
 
@@ -547,6 +575,7 @@ private[spark] class BanditManager(
     policy.stateLock.synchronized {
       for (arm <- 0 until policy.numArms) {
         val newFeatures = eye + localFeatures(arm) + oldLocalFeatures(arm) + features(arm)
+        val newFeatureSum = localFeatureSum(arm) + oldLocalFeatureSum(arm) + featureSum(arm)
         val newRewards = localRewards(arm) + oldLocalRewards(arm) + rewards(arm)
         val newRewardStats = {
           rewardStats(arm)
@@ -554,7 +583,7 @@ private[spark] class BanditManager(
             .merge(oldLocalRewardStats(arm))
         }
 
-        policy.setState(arm, newFeatures, newRewards, newRewardStats)
+        policy.setState(arm, newFeatures, newFeatureSum, newRewards, newRewardStats)
       }
     }
   }

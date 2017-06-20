@@ -42,6 +42,7 @@ private[spark] class LinUCBPolicy(numArms: Int, numFeatures: Int, alpha: Double)
   extends ContextualBanditPolicy(numArms, numFeatures) {
   override protected def estimateRewards(features: DenseVector[Double],
                                          armFeaturesAcc: DenseMatrix[Double],
+                                         armFeatureSumAcc: DenseVector[Double],
                                          armRewardsAcc: DenseVector[Double],
                                          armRewardsStats: WeightedStats): Double = {
     // TODO: Should be able to optimize code by only computing coefficientEstimate after
