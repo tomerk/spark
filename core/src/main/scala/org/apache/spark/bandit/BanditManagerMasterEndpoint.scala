@@ -91,7 +91,7 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, co
                   // Identify whether to cluster from the arm observations
                   val meanDiff = math.abs(rewards(i).mean - otherRewards(i).mean)
 
-                  // confidence bound for the other reward
+                  /*// confidence bound for the other reward
                   val otherCb = {
                     banditClusterConstant * math.sqrt(
                       otherRewards(i).variance *
@@ -107,7 +107,14 @@ private[spark] class BanditManagerMasterEndpoint(override val rpcEnv: RpcEnv, co
                         (1 + math.log(1 + rewards(i).totalWeights)) /
                         (1 + rewards(i).totalWeights)
                     )
-                  }
+                  }*/
+
+                  val otherCb = 0.0
+                  val cb = banditClusterConstant * math.sqrt(
+                    (rewards(i).variance/rewards(i).totalWeights) +
+                      (otherRewards(i).variance/otherRewards(i).totalWeights)
+                  )
+
 
                   // Cluster these observations if the difference is within
                   // the confidence bounds

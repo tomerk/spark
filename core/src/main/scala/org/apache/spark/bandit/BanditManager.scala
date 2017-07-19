@@ -132,7 +132,7 @@ private[spark] class BanditManager(
                           val meanDiff = math.abs(recentRewards(i).mean - oldRewards(i).mean)
 
                           // confidence bound for the old rewards
-                          val oldCb = {
+                          /*val oldCb = {
                             driftDetectConstant * math.sqrt(
                               oldRewards(i).variance *
                                 (1 + math.log(1 + oldRewards(i).totalWeights)) /
@@ -147,7 +147,13 @@ private[spark] class BanditManager(
                                 (1 + math.log(1 + recentRewards(i).totalWeights)) /
                                 (1 + recentRewards(i).totalWeights)
                             )
-                          }
+                          }*/
+
+                          val oldCb = 0.0
+                          val cb = driftDetectConstant * math.sqrt(
+                            (recentRewards(i).variance/recentRewards(i).totalWeights) +
+                            (oldRewards(i).variance/oldRewards(i).totalWeights)
+                          )
 
                           // If drifting was detected, reset our knowledge.
                           // Otherwise move the recent observations to the old ones
