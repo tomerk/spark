@@ -209,13 +209,13 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
   }
 
   test("Test Bandit Timings batches") {
-    val rewardDists: Seq[Rand[Double]] = Seq(new Gamma(0.1, 200.0), new Gamma(0.2, 200.0),
-      new Gamma(0.25, 200.0), new Gamma(0.29, 200.0), new Gamma(0.3, 200.0))
+    /*val rewardDists: Seq[Rand[Double]] = Seq(new Gamma(0.1, 200.0), new Gamma(0.2, 200.0),
+      new Gamma(0.25, 200.0), new Gamma(0.29, 200.0), new Gamma(0.3, 200.0))*/
 
-    //val rewardDists: Seq[Rand[Double]] = (0 until 10).flatMap(x =>
-    // Seq(Rand.gaussian(-10, 6), Rand.gaussian(-20, 6)))
+    val rewardDists: Seq[Rand[Double]] = (0 until 10).flatMap(x =>
+     Seq(Rand.gaussian(-10, 6), Rand.gaussian(-20, 6)))
 
-    // val rewardDists = Seq(Rand.gaussian(10, 50), Rand.gaussian(20, 1000))
+    // val rewardDists = Seq(Rand.gaussian(10010, 50), Rand.gaussian(10020, 1000))
     //val rewardDists = Seq(Rand.gaussian(10, 1000), Rand.gaussian(20, 50))
 
     val numArms = rewardDists.length
@@ -223,16 +223,17 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
     var rewards = 0.0
     val start = System.currentTimeMillis()
     val n = 1000
-    val batchSize = 1
     val numTrials = 100
-    val banditResults = (1 to 10).flatMap {
+    val banditResults = (1 to 1).flatMap {
       batchSize =>
         val numBatches = n / batchSize
-      (0 until numTrials).flatMap { trial =>
+      val res = (0 until numTrials).flatMap { trial =>
         //val policy = new UCB1Policy(numArms, 1.0)
         //val policy = new UCB1Policy(numArms, 1.0)
         //val policy = new UCB1NormalPolicy(numArms = numArms, 0.5)
         val policy = new GaussianThompsonSamplingPolicy(numArms = numArms, 1.0)
+        //val policy = new BinomialThompsonSamplingPolicy(numArms = numArms, 0, 1)
+        //val policy = new BinomialThompsonSamplingAutoPolicy(numArms = numArms, 1.0)
         //val policy = new EpsilonDecreasingPolicy(numArms = numArms, 5.0 / batchSize)
         //val policy = new GaussianBayesUCBPolicy(numArms, 1.0)
 
@@ -240,7 +241,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
           val arm = policy.chooseArm(1)//batchSize)
         val rewardDist = rewardDists(arm)
 
-          val rewardList = (0 until batchSize).map(_ => rewardDist.draw())
+          val rewardList = (0 until batchSize).map(_ => math.abs(rewardDist.draw()))
           rewards += rewardList.sum/rewardList.length
           policy.provideFeedback(arm, 1, rewardList.sum/rewardList.length)
 
@@ -250,20 +251,23 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
           }
         }
       }
+        val end = System.currentTimeMillis()
+
+        logInfo(s"${(end - start)/(numBatches.toDouble * numTrials * batchSize)} millis per round")
+        logInfo(s"Mean reward: ${rewards/(numBatches.toDouble * numTrials * batchSize)}")
+        res
+
     }
     val end = System.currentTimeMillis()
 
-    val writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(
+    /*val writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(
       s"/Users/tomerk11/Desktop/tests/${System.currentTimeMillis()}.csv")))
     writer.write(s"trial,step,batchSize,arm,reward\n")
 
     for (x <- banditResults) {
       writer.write(x + "\n")
     }
-    writer.close()
-
-    //logInfo(s"${(end - start)/(numBatches.toDouble * numTrials * batchSize)} millis per round")
-    //logInfo(s"Mean reward: ${rewards/(numBatches.toDouble * numTrials * batchSize)}")
+    writer.close()*/
   }
 
   test("Test Bandit Contextual batches") {
@@ -272,12 +276,12 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
     /*Seq(new Gamma(0.1, 200.0), new Gamma(0.2, 200.0),
       new Gamma(0.25, 200.0), new Gamma(0.29, 200.0), new Gamma(0.3, 200.0))*/
 
-    val numFeatures = 10
+    val numFeatures = 8
     val weights: Seq[DenseVector[Double]] = (0 until rewardDists.length).map(
-      x => DenseVector((0.0 +: Rand.gaussian.sample(numFeatures - 1)): _*))
+      x => DenseVector((Rand.gaussian.sample(numFeatures)): _*))
 
     def genFeatures(): DenseVector[Double] = {
-      DenseVector((1.0 +: Rand.gaussian.sample(numFeatures - 1)): _*)
+      DenseVector((Rand.gaussian.sample(numFeatures)): _*)
     }
 
     //val rewardDists: Seq[Rand[Double]] = (0 until 10).flatMap(x =>
@@ -328,6 +332,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
 
             //logInfo(s"$trial,${i * batchSize},$arm")
             rewardList.zipWithIndex.map { case (reward, batchIndex) =>
+              //logInfo(s"$trial,${i * batchSize + batchIndex},$batchSize,$arm,$reward")
               s"$trial,${i * batchSize + batchIndex},$batchSize,$arm,$reward"
             }
           }
@@ -339,14 +344,14 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
         res
     }
 
-    val writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(
+    /*val writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(
       s"/Users/tomerk11/Desktop/tests/${System.currentTimeMillis()}.csv")))
     writer.write(s"trial,step,batchSize,arm,reward\n")
 
     for (x <- banditResults) {
       writer.write(x + "\n")
     }
-    writer.close()
+    writer.close()*/
 
   }
 
