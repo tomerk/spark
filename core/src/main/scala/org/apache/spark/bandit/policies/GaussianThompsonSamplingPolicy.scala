@@ -17,9 +17,10 @@
 
 package org.apache.spark.bandit.policies
 
-import breeze.stats.distributions.Gaussian
+import breeze.stats.distributions.{Beta, Gaussian}
 import org.apache.commons.math3.distribution.TDistribution
 import org.apache.spark.bandit.WeightedStats
+import org.apache.spark.internal.Logging
 
 /**
  * Thompson Sampling with Gaussian priors (using sample variance).
@@ -58,3 +59,56 @@ private[spark] class GaussianThompsonSamplingPolicy(
     }
   }
 }
+
+private[spark] class BinomialThompsonSamplingAutoPolicy(
+                                                     numArms: Int,
+                                                     varianceMultiplier: Double
+                                                   ) extends BanditPolicy(numArms) {
+  override protected def estimateRewards(playsToMake: Int,
+                                         totalRewards: Array[WeightedStats]): Seq[Double] = {
+    (0 until numArms).map { arm =>
+
+      val numPlays = totalRewards(arm).totalWeights
+      if (numPlays >= 1) {
+
+        new Beta(
+          0.5 + (totalRewards(arm).mean - totalRewards(arm).min) * numPlays /
+            ((totalRewards(arm).max - totalRewards(arm).min) + 1.0),
+          0.5 + (totalRewards(arm).max - totalRewards(arm).mean) * numPlays /
+            ((totalRewards(arm).max - totalRewards(arm).min) + 1.0)
+        ).sample()
+      } else {
+        Double.PositiveInfinity
+      }
+    }
+  }
+}
+
+private[spark] class BinomialThompsonSamplingPolicy(
+                                                     numArms: Int,
+                                                     min: Double,
+                                                     max: Double
+                                                   ) extends BanditPolicy(numArms) with Logging {
+  override protected def estimateRewards(playsToMake: Int,
+                                         totalRewards: Array[WeightedStats]): Seq[Double] = {
+    (0 until numArms).map { arm =>
+
+      val numPlays = totalRewards(arm).totalWeights
+
+      if (numPlays >= 1) {
+
+        val alpha = 0.5 + (totalRewards(arm).mean - min) * numPlays
+        val beta = 0.5 + (max - totalRewards(arm).mean) * numPlays
+        //logError(s"$max, ${totalRewards(arm).mean}, $alpha, $beta")
+        new Beta(
+        alpha, beta
+
+      ).sample()
+      } else {
+        Double.PositiveInfinity
+      }
+    }
+  }
+}
+
+
