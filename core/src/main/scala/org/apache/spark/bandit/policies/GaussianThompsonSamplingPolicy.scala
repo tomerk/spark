@@ -17,7 +17,7 @@
 
 package org.apache.spark.bandit.policies
 
-import breeze.stats.distributions.{Beta, Gaussian}
+import breeze.stats.distributions.{Beta, Gaussian, Uniform}
 import org.apache.commons.math3.distribution.TDistribution
 import org.apache.spark.bandit.WeightedStats
 import org.apache.spark.internal.Logging
@@ -54,7 +54,7 @@ private[spark] class GaussianThompsonSamplingPolicy(
           math.sqrt(runningVariance / numPlays) * varianceMultiplier +
           totalRewards(arm).mean
       } else {
-        Double.PositiveInfinity
+        new Uniform(Double.MinValue, Double.MaxValue).sample()
       }
     }
   }
