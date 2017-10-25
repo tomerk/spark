@@ -369,13 +369,34 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
     writer.close()*/
   }
 
+  test("Merge timing upper bound") {
+    val f = 8
+    var dat = DenseMatrix.rand(f, f)
+
+    var i = 0
+    val n = 10000000
+    val start = System.nanoTime()
+    while (i < n) {
+      dat = dat + dat
+      dat = dat + dat
+      dat = dat + dat
+      dat = dat :* 20.0
+      i += 1
+    }
+    val end = System.nanoTime()
+
+    val total = (end - start) / n
+    logInfo(s"took: $total nanoseconds per merge")
+  }
+
   test("Test Bandit Contextual batches") {
-    val rewardDists: Seq[Rand[Double]] = Seq(Rand.gaussian(0, 1.0), Rand.gaussian(1, 0.5),
+    val rewardDists: Seq[Rand[Double]] = Seq(Rand.gaussian(0, 1.0), Rand.gaussian(0, 1.0),
+      Rand.gaussian(0, 1.0), Rand.gaussian(1, 0.5),
       Rand.gaussian(2, 0.5))
     /*Seq(new Gamma(0.1, 200.0), new Gamma(0.2, 200.0),
       new Gamma(0.25, 200.0), new Gamma(0.29, 200.0), new Gamma(0.3, 200.0))*/
 
-    val numFeatures = 8
+    val numFeatures = 2
     val weights: Seq[DenseVector[Double]] = (0 until rewardDists.length).map(
       x => DenseVector((Rand.gaussian.sample(numFeatures)): _*))
 
@@ -394,7 +415,10 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
     val n = 1000
     val batchSize = 1
     val numTrials = 100
-    val banditResults = (1 to 30).flatMap {
+    val policy = new StandardizedLinThompsonSamplingPolicy(numFeatures = numFeatures,
+      numArms = numArms, v = 1.0, useCholesky = true)
+
+    val banditResults = (1 to 1).flatMap {
       batchSize =>
         val numBatches = n / batchSize
         val start = System.currentTimeMillis()
@@ -405,9 +429,9 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
           //val policy = new UCB1Policy(numArms, 1.0)
           //val policy = new UCB1Policy(numArms, 1.0)
           //val policy = new UCB1NormalPolicy(numArms = numArms, 0.5)
-          val policy = new LinThompsonSamplingPolicy(numFeatures = numFeatures,
-            numArms = numArms, v = 1.0, useCholesky = true, usingBias = false)
-          //val policy = new GaussianThompsonSamplingPolicy(numArms = numArms, 1.0)
+          /*val policy = new StandardizedLinThompsonSamplingPolicy(numFeatures = numFeatures,
+            numArms = numArms, v = 1.0, useCholesky = true)*/
+//          val policy = new GaussianThompsonSamplingPolicy(numArms = numArms, 1.0)
 
           //val policy = new EpsilonDecreasingPolicy(numArms = numArms, 5.0 / batchSize)
           //val policy = new GaussianBayesUCBPolicy(numArms, 1.0)
@@ -416,6 +440,7 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
             val features = (0 until batchSize).map(_ => genFeatures())
             val avgFeature = features.reduce(_ + _) / batchSize.toDouble
 
+            //val arm = policy.chooseArm(1)
             val arm = policy.chooseArm(avgFeature)
             val rewardDist = rewardDists(arm)
             val armWeights = weights(arm)
@@ -424,8 +449,8 @@ class BanditSuite extends SparkFunSuite with LocalSparkContext {
               features(batchIndex).dot(armWeights) + rewardDist.draw()
             }
             rewards += rewardList.sum
-            //policy.provideFeedback(arm, 1, rewardList.sum/rewardList.length)
 
+            //policy.provideFeedback(arm, 1, rewardList.sum/rewardList.length)
             policy.provideFeedback(arm, avgFeature, new WeightedStats().add(
               rewardList.sum/rewardList.length))
 
