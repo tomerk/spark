@@ -21,6 +21,7 @@ import java.io.File
 
 import org.apache.spark.SparkConf
 import org.apache.spark.internal.Logging
+import org.apache.spark.scheduler.TaskInfo
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
@@ -41,15 +42,16 @@ object TPCDSQueryBenchmark extends Logging {
       .setMaster("local[4]")
       .setAppName("test-sql-context")
       .set("spark.sql.parquet.compression.codec", "snappy")
-      .set("spark.sql.shuffle.partitions", "64")
+      .set("spark.sql.shuffle.partitions", "512")
       .set("spark.driver.memory", "3g")
       .set("spark.executor.memory", "3g")
       .set("spark.bandits.driftDetectionRate", "99999999s")
       .set("spark.bandits.alwaysShare", "true")
       .set("spark.bandits.communicationRate", "500ms")
       .set("spark.sql.join.banditJoin", "true")
-      //.set("spark.sql.join.banditJoin.contextual", "true")
+      .set("spark.sql.join.banditJoin.contextual", "false")
       .set("spark.sql.join.bandit.shuffleSortHash", "both")
+    .set("spark.sql.autoBroadcastJoinThreshold", "10")
 
   val spark = SparkSession.builder.config(conf).getOrCreate()
 
@@ -70,6 +72,8 @@ object TPCDSQueryBenchmark extends Logging {
     require(dataLocation.nonEmpty,
       "please modify the value of dataLocation to point to your local TPCDS data")
     val tableSizes = setupTables(dataLocation)
+    var stagesWithJoins = Set[Int]()
+
     queries.foreach { name =>
       val queryString = fileToString(new File(Thread.currentThread().getContextClassLoader
         .getResource(s"tpcds/$name.sql").getFile))
@@ -96,25 +100,58 @@ object TPCDSQueryBenchmark extends Logging {
         case _ =>
       }
 
+      logError(name)
+      spark.sql(queryString).explain()
 
-      val numRows = queryRelations.map(tableSizes.getOrElse(_, 0L)).sum
+      /*val numRows = queryRelations.map(tableSizes.getOrElse(_, 0L)).sum
       val benchmark = new Benchmark(s"TPCDS Snappy", numRows, 1)
       benchmark.addCase(name) { i =>
         spark.sql(queryString).collect()
       }
       benchmark.run()
 
-      val callsites = spark.sparkContext.jobProgressListener.completedStages
-        .filter(x => RDDOperationGraphContainsStringUtil(x, "ShuffledHashOrSortMerge"))
 
-      logError(s"Found Callsites: ${callsites.map(_.stageId)}")
+      val nextStagesWithJoins = SparkNamespaceUtils.matchingStages(spark, "SortMergeJoin")
+      val xwer = SparkNamespaceUtils.taskTimes(spark, nextStagesWithJoins.diff(stagesWithJoins))
+      stagesWithJoins = nextStagesWithJoins
+
+
+      logError(s"Found Callsites: ${xwer}") */
 
     }
   }
 
+  object SparkNamespaceUtils {
+    def matchingStages(spark: SparkSession, stringToMatch: String): Set[Int] = {
+      spark.sparkContext.jobProgressListener.completedStages
+        .filter(x => RDDOperationGraphContainsStringUtil(x, stringToMatch))
+        .map(_.stageId).toSet
+
+    }
+
+    def stageExecutorRunTime(spark: SparkSession, stageIds: Set[Int]): Long = {
+      spark.sparkContext.jobProgressListener.completedStages
+        .filter(x => stageIds.contains(x.stageId)).map(_.taskMetrics.executorRunTime).sum
+    }
+
+    def taskTimes(spark: SparkSession, stageIds: Set[Int]): Seq[(Int, Seq[TaskInfo])] = {
+      val taskInfos = stageIds.toSeq.map{ stageId =>
+
+        (stageId,
+          spark.sparkContext.jobProgressListener.stageIdToData((stageId, 0))
+            .taskData.values.map(_.taskInfo).toSeq)
+
+      }
+
+      taskInfos
+    }
+
+
+  }
+
   def main(args: Array[String]): Unit = {
     //
-    val tpcdsQueries = Seq("q1", "q2", "q4", "q5", "q6", "q10", "q11", "q14a", "q14b", "q16", "q17", "q24a", "q24b", "q25", "q29", "q30", "q31", "q32", "q35", "q37", "q38", "q39a", "q39b", "q40", "q47", "q49", "q50", "q54", "q57", "q58", "q59", "q64", "q65", "q72", "q74", "q75", "q78", "q80", "q81", "q82", "q83", "q84", "q85", "q87", "q92", "q93", "q94", "q95")
+    val tpcdsQueries = Seq("q72")//Seq("q14b", "q1", "q2", "q4", "q5", "q6", "q10", "q11", "q14a", "q14b", "q16", "q17", "q24a", "q24b", "q25", "q29", "q30", "q31", "q32", "q35", "q37", "q38", "q39a", "q39b", "q40", "q47", "q49", "q50", "q54", "q57", "q58", "q59", "q64", "q65", "q72", "q74", "q75", "q78", "q80", "q81", "q82", "q83", "q84", "q85", "q87", "q92", "q93", "q94", "q95")
     //val tpcdsQueries = Seq("q1", "q2", "q4", "q5", "q6", "q10", "q11", "q14a", "q14b", "q16", "q17", "q24a", "q24b", "q25", "q29", "q30", "q31", "q32", "q35", "q37", "q38", "q39a", "q39b", "q40", "q47", "q49", "q50", "q54", "q57", "q58", "q59", "q64", "q65", "q72", "q74", "q75", "q78", "q80", "q81", "q82", "q83", "q84", "q85", "q87", "q92", "q93", "q94", "q95")
     // List of all TPC-DS queries
      /*Seq(
