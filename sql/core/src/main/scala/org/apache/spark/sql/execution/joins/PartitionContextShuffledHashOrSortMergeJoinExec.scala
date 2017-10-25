@@ -25,11 +25,11 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{SQLContext, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, GenericInternalRow, JoinedRow, UnsafeProjection}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, GenericInternalRow, JoinedRow, UnsafeProjection, UnsafeRow}
 import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
-import org.apache.spark.sql.execution.{BinaryExecNode, RowIterator, SparkPlan}
+import org.apache.spark.sql.execution.{BinaryExecNode, ExternalAppendOnlyUnsafeRowArray, RowIterator, SparkPlan}
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -46,6 +46,14 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
     left: SparkPlan,
     right: SparkPlan)
   extends BinaryExecNode with HashJoin {
+
+  private def getSpillThreshold: Int = {
+    sqlContext.conf.sortMergeJoinExecBufferSpillThreshold
+  }
+
+  private def getInMemoryThreshold: Int = {
+    sqlContext.conf.sortMergeJoinExecBufferInMemoryThreshold
+  }
 
   def features(in: (Array[InternalRow], Array[InternalRow], SQLMetric,
     Seq[Attribute], Seq[Attribute])): DenseVector[Double] = {
@@ -67,6 +75,8 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
   def joinBySort(in: (Array[InternalRow], Array[InternalRow], SQLMetric,
     Seq[Attribute], Seq[Attribute])): Iterator[InternalRow] = {
 
+    val spillThreshold = getSpillThreshold
+    val inMemoryThreshold = getInMemoryThreshold
     val (leftOutput, rightOutput) = (in._4, in._5)
     val boundCondition: (InternalRow) => Boolean = {
       condition.map { cond =>
@@ -113,39 +123,40 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
       case _: InnerLike =>
         new RowIterator {
           private[this] var currentLeftRow: InternalRow = _
-          private[this] var currentRightMatches: ArrayBuffer[InternalRow] = _
-          private[this] var currentMatchIdx: Int = -1
+          private[this] var currentRightMatches: ExternalAppendOnlyUnsafeRowArray = _
+          private[this] var rightMatchesIterator: Iterator[UnsafeRow] = null
           private[this] val smjScanner = new SortMergeJoinScanner(
             UnsafeProjection.create(leftKeys, leftOutput),
             UnsafeProjection.create(rightKeys, rightOutput),
             keyOrdering,
             RowIterator.fromScala(leftIter),
-            RowIterator.fromScala(rightIter)
+            RowIterator.fromScala(rightIter),
+            inMemoryThreshold,
+            spillThreshold
           )
           private[this] val joinRow = new JoinedRow
 
           if (smjScanner.findNextInnerJoinRows()) {
             currentRightMatches = smjScanner.getBufferedMatches
             currentLeftRow = smjScanner.getStreamedRow
-            currentMatchIdx = 0
+            rightMatchesIterator = currentRightMatches.generateIterator()
           }
 
           override def advanceNext(): Boolean = {
-            while (currentMatchIdx >= 0) {
-              if (currentMatchIdx == currentRightMatches.length) {
+            while (rightMatchesIterator != null) {
+              if (!rightMatchesIterator.hasNext) {
                 if (smjScanner.findNextInnerJoinRows()) {
                   currentRightMatches = smjScanner.getBufferedMatches
                   currentLeftRow = smjScanner.getStreamedRow
-                  currentMatchIdx = 0
+                  rightMatchesIterator = currentRightMatches.generateIterator()
                 } else {
                   currentRightMatches = null
                   currentLeftRow = null
-                  currentMatchIdx = -1
+                  rightMatchesIterator = null
                   return false
                 }
               }
-              joinRow(currentLeftRow, currentRightMatches(currentMatchIdx))
-              currentMatchIdx += 1
+              joinRow(currentLeftRow, rightMatchesIterator.next())
               if (boundCondition(joinRow)) {
                 numOutputRows += 1
                 return true
@@ -163,7 +174,9 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
           bufferedKeyGenerator = UnsafeProjection.create(rightKeys, rightOutput),
           keyOrdering,
           streamedIter = RowIterator.fromScala(leftIter),
-          bufferedIter = RowIterator.fromScala(rightIter)
+          bufferedIter = RowIterator.fromScala(rightIter),
+          inMemoryThreshold,
+          spillThreshold
         )
         val rightNullRow = new GenericInternalRow(right.output.length)
         new LeftOuterIterator(
@@ -175,15 +188,17 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
           bufferedKeyGenerator = UnsafeProjection.create(leftKeys, leftOutput),
           keyOrdering,
           streamedIter = RowIterator.fromScala(rightIter),
-          bufferedIter = RowIterator.fromScala(leftIter)
+          bufferedIter = RowIterator.fromScala(leftIter),
+          inMemoryThreshold,
+          spillThreshold
         )
-        val leftNullRow = new GenericInternalRow(leftOutput.length)
+        val leftNullRow = new GenericInternalRow(left.output.length)
         new RightOuterIterator(
           smjScanner, leftNullRow, boundCondition, resultProj, numOutputRows).toScala
 
       case FullOuter =>
-        val leftNullRow = new GenericInternalRow(leftOutput.length)
-        val rightNullRow = new GenericInternalRow(rightOutput.length)
+        val leftNullRow = new GenericInternalRow(left.output.length)
+        val rightNullRow = new GenericInternalRow(right.output.length)
         val smjScanner = new SortMergeFullOuterJoinScanner(
           leftKeyGenerator = UnsafeProjection.create(leftKeys, leftOutput),
           rightKeyGenerator = UnsafeProjection.create(rightKeys, rightOutput),
@@ -207,7 +222,9 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
             UnsafeProjection.create(rightKeys, rightOutput),
             keyOrdering,
             RowIterator.fromScala(leftIter),
-            RowIterator.fromScala(rightIter)
+            RowIterator.fromScala(rightIter),
+            inMemoryThreshold,
+            spillThreshold
           )
           private[this] val joinRow = new JoinedRow
 
@@ -215,14 +232,15 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
             while (smjScanner.findNextInnerJoinRows()) {
               val currentRightMatches = smjScanner.getBufferedMatches
               currentLeftRow = smjScanner.getStreamedRow
-              var i = 0
-              while (i < currentRightMatches.length) {
-                joinRow(currentLeftRow, currentRightMatches(i))
-                if (boundCondition(joinRow)) {
-                  numOutputRows += 1
-                  return true
+              if (currentRightMatches != null && currentRightMatches.length > 0) {
+                val rightMatchesIterator = currentRightMatches.generateIterator()
+                while (rightMatchesIterator.hasNext) {
+                  joinRow(currentLeftRow, rightMatchesIterator.next())
+                  if (boundCondition(joinRow)) {
+                    numOutputRows += 1
+                    return true
+                  }
                 }
-                i += 1
               }
             }
             false
@@ -239,7 +257,9 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
             UnsafeProjection.create(rightKeys, rightOutput),
             keyOrdering,
             RowIterator.fromScala(leftIter),
-            RowIterator.fromScala(rightIter)
+            RowIterator.fromScala(rightIter),
+            inMemoryThreshold,
+            spillThreshold
           )
           private[this] val joinRow = new JoinedRow
 
@@ -247,17 +267,17 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
             while (smjScanner.findNextOuterJoinRows()) {
               currentLeftRow = smjScanner.getStreamedRow
               val currentRightMatches = smjScanner.getBufferedMatches
-              if (currentRightMatches == null) {
+              if (currentRightMatches == null || currentRightMatches.length == 0) {
+                numOutputRows += 1
                 return true
               }
-              var i = 0
               var found = false
-              while (!found && i < currentRightMatches.length) {
-                joinRow(currentLeftRow, currentRightMatches(i))
+              val rightMatchesIterator = currentRightMatches.generateIterator()
+              while (!found && rightMatchesIterator.hasNext) {
+                joinRow(currentLeftRow, rightMatchesIterator.next())
                 if (boundCondition(joinRow)) {
                   found = true
                 }
-                i += 1
               }
               if (!found) {
                 numOutputRows += 1
@@ -279,7 +299,9 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
             UnsafeProjection.create(rightKeys, rightOutput),
             keyOrdering,
             RowIterator.fromScala(leftIter),
-            RowIterator.fromScala(rightIter)
+            RowIterator.fromScala(rightIter),
+            inMemoryThreshold,
+            spillThreshold
           )
           private[this] val joinRow = new JoinedRow
 
@@ -288,14 +310,13 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
               currentLeftRow = smjScanner.getStreamedRow
               val currentRightMatches = smjScanner.getBufferedMatches
               var found = false
-              if (currentRightMatches != null) {
-                var i = 0
-                while (!found && i < currentRightMatches.length) {
-                  joinRow(currentLeftRow, currentRightMatches(i))
+              if (currentRightMatches != null && currentRightMatches.length > 0) {
+                val rightMatchesIterator = currentRightMatches.generateIterator()
+                while (!found && rightMatchesIterator.hasNext) {
+                  joinRow(currentLeftRow, rightMatchesIterator.next())
                   if (boundCondition(joinRow)) {
                     found = true
                   }
-                  i += 1
                 }
               }
               result.setBoolean(0, found)
@@ -306,7 +327,7 @@ case class PartitionContextShuffledHashOrSortMergeJoinExec(
           }
 
           override def getRow: InternalRow = resultProj(joinRow(currentLeftRow, result))
-        }.toScala//.map(_.copy()).toBuffer.iterator
+        }.toScala
 
       case x =>
         throw new IllegalArgumentException(

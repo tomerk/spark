@@ -148,7 +148,7 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
      * use the size of bytes here as estimation.
      */
     private def smaller(a: LogicalPlan, b: LogicalPlan): Boolean = {
-      a.statistics.sizeInBytes <= b.statistics.sizeInBytes
+      a.stats(conf).sizeInBytes <= b.stats(conf).sizeInBytes
     }
 
     private def canBuildRight(joinType: JoinType): Boolean = joinType match {
