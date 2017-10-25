@@ -27,6 +27,7 @@ import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.{BinaryExecNode, ExternalAppendOnlyUnsafeRowArray, RowIterator, SparkPlan}
+import org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter
 import org.apache.spark.util.collection.{BitSet, ExternalSorter}
 
 import scala.collection.mutable.ArrayBuffer
@@ -46,11 +47,13 @@ case class ShuffledHashOrSortMergeJoinExec(
   extends BinaryExecNode with HashJoin {
 
   private def getSpillThreshold: Int = {
-    sqlContext.conf.sortMergeJoinExecBufferSpillThreshold
+    UnsafeExternalSorter.DEFAULT_NUM_ELEMENTS_FOR_SPILL_THRESHOLD.toInt
+    //sqlContext.conf.sortMergeJoinExecBufferSpillThreshold
   }
 
   private def getInMemoryThreshold: Int = {
-    sqlContext.conf.sortMergeJoinExecBufferInMemoryThreshold
+    Int.MaxValue
+    //sqlContext.conf.sortMergeJoinExecBufferInMemoryThreshold
   }
 
   //val sc = left.sqlContext.sparkContext
