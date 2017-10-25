@@ -713,7 +713,7 @@ private[spark] object JsonProtocol {
 
   def taskInfoFromJson(json: JValue): TaskInfo = {
     val taskId = (json \ "Task ID").extract[Long]
-    val partitionId = (json \ "Partition ID").extractOpt[Int].getOrElse(-1)
+    val partitionId = Utils.jsonOption(json \ "Partition ID").map(_.extract[Int]).getOrElse(-1)
     val index = (json \ "Index").extract[Int]
     val attempt = Utils.jsonOption(json \ "Attempt").map(_.extract[Int]).getOrElse(1)
     val launchTime = (json \ "Launch Time").extract[Long]
